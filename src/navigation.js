@@ -5,6 +5,8 @@ function mapArt(canvas, player, places, selected, visited, big = false) {
     w = Math.max(1, rect.width),
     h = Math.max(1, rect.height),
     dpr = Math.min(2, window.devicePixelRatio || 1);
+  // A folded or hidden map has no drawable area inside its margins.
+  if (w <= 10 || h <= 9) return [];
   if (canvas.width !== Math.round(w * dpr) || canvas.height !== Math.round(h * dpr)) {
     canvas.width = Math.round(w * dpr);
     canvas.height = Math.round(h * dpr);
