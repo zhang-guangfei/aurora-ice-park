@@ -24,7 +24,7 @@ function buildRides(T, k) {
       metalness: 0.15,
       roughness: 0.22,
       transparent: true,
-      opacity: 0.48,
+      opacity: 0.23,
       depthWrite: false,
       side: T.DoubleSide,
     }),
@@ -55,13 +55,14 @@ function buildRides(T, k) {
   }
   const tube = (p, points, r, mat, n) =>
     m(p, new T.TubeGeometry(new T.CatmullRomCurve3(points), n, r, 6, false), mat, V(0, 0, 0));
-  const yaw = -0.36,
+  const wheelRadius = 25, hubHeight = wheelRadius + 3, wheelPeriod = 106;
+  const yaw = -0.96,
     co = Math.cos(yaw),
     si = Math.sin(yaw),
-    at = (x, y, z) => V(53 + co * x + si * z, 21 + y, -19 - si * x + co * z),
-    low = (x, y, z) => V(x, y - 21, z),
+    at = (x, y, z, out = V()) => out.set(53 + co * x + si * z, hubHeight + y, -19 - si * x + co * z),
+    low = (x, y, z) => V(x, y - hubHeight, z),
     rim = (a, r, z) => V(Math.sin(a) * r, -Math.cos(a) * r, z);
-  wheel.position.set(53, 21, -19);
+  wheel.position.set(53, hubHeight, -19);
   wheel.rotation.y = yaw;
   group.add(wheel);
   wheel.add(spin);
@@ -79,7 +80,7 @@ function buildRides(T, k) {
         0.066,
         side > 0 ? C : L
       );
-      const p = at(x, -21, z);
+      const p = at(x, -hubHeight, z);
       colliders.push({ type: 'circle', x: p.x, z: p.z, r: 1.2, maxY: 2.5 });
     }
     rod(wheel, low(-7.35, 5.1, side * 4.6), low(7.35, 5.1, side * 4.6), 0.17, N);
@@ -130,6 +131,7 @@ function buildRides(T, k) {
   }
   rod(spin, V(0, 0, -1.08), V(0, 0, 1.06), 1.5, P);
   batch(T, spin);
+  spin.scale.set(wheelRadius / 18, wheelRadius / 18, 1);
   spin.userData.dynamic = true;
   const cab = new T.Group();
   for (const s of [-1, 1])
@@ -155,13 +157,13 @@ function buildRides(T, k) {
   const belt = tor(cab, V(0, -1.78, 0), 1, 0.06, G, 28);
   belt.rotation.x = Math.PI / 2;
   belt.scale.set(1.04, 0.84, 1);
-  for (let i = 0; i < 10; i++) {
-    const a = (tau * i) / 10;
+  for (let i = 0; i < 6; i++) {
+    const a = (tau * (i + 0.5)) / 6;
     rod(
       cab,
       V(1.02 * Math.sin(a), -1.82, 0.8 * Math.cos(a)),
       V(1.06 * Math.sin(a), -0.86, 0.84 * Math.cos(a)),
-      0.045,
+      0.036,
       N
     );
   }
@@ -177,27 +179,34 @@ function buildRides(T, k) {
       pods.push(mesh);
     }
   });
+  // Leave the back lip of the launch deck, then sweep west of the tower and south of the stair foot.
   const points = [
-      [-52.5, 18.6, -17.45],
-      [-53.1, 18.15, -21.6],
-      [-56.1, 16.85, -25.35],
-      [-59.85, 14.8, -24.3],
-      [-60.6, 12.85, -19.45],
-      [-57.75, 11, -14.95],
-      [-52.15, 9.25, -13.2],
-      [-46.9, 8.25, -14.2],
-      [-42.35, 7.25, -13.55],
-      [-39.35, 5.9, -10.05],
-      [-39.65, 4.65, -4.8],
-      [-41.2, 3.45, 0.45],
-      [-40.15, 2.2, 6.1],
-      [-36.15, 1.09, 11.85],
+      [-52.5, 18.64, -18.36],
+      [-52.65, 18.48, -21.35],
+      [-54.8, 17.6, -25.9],
+      [-59.9, 16.15, -28.5],
+      [-65.0, 14.65, -26.1],
+      [-66.45, 13.2, -20.55],
+      [-64.25, 11.85, -15.25],
+      [-60.85, 10.5, -10.5],
+      [-60.6, 9.2, -5.6],
+      [-63.55, 7.9, -0.65],
+      [-64.15, 6.65, 4.4],
+      [-60.7, 5.35, 8.7],
+      [-55.35, 4.15, 11.65],
+      [-52.15, 3.15, 15.5],
+      [-51.15, 2.40, 18.85],
+      [-48.7, 1.82, 21.4],
+      [-45.2, 1.34, 21.75],
+      [-41.0, 0.92, 20.7],
+      [-35.95, 0.52, 18.27],
       [-30.25, 0.25, 16.95],
     ],
     curve = new T.CatmullRomCurve3(points.map((v) => V(...v)));
   curve.arcLengthDivisions = 460;
   const slidePoint = (u) => curve.getPointAt(Math.min(1, Math.max(0, u))),
-    sections = 112,
+    slideLength = curve.getLength(),
+    sections = Math.ceil(slideLength / 0.65),
     frames = [],
     prof = Array.from({ length: 15 }, (_, i) => {
       const s = (i - 7) / 7;
@@ -280,13 +289,19 @@ function buildRides(T, k) {
       sections
     );
   }
-  for (let i = 7; i < sections - 5; i += 12) {
-    const f = frames[i],
-      p = f.v;
-    rod(group, V(p.x, 0, p.z), V(p.x, p.y - 0.55, p.z), 0.38, K);
-    for (const s of [-1, 1])
-      rod(group, V(p.x, Math.max(0.3, p.y - 2.7), p.z), cross(f, s, -0.42), 0.14, N);
-    colliders.push({ type: 'circle', x: p.x, z: p.z, r: 0.48, maxY: p.y - 0.65 });
+  const slideStructure = new T.Group();
+  slideStructure.name = 'Slide supports and access tower';
+  group.add(slideStructure);
+  const supportSpacing = Math.round(7.4 * sections / slideLength);
+  for (let i = supportSpacing; i < sections; i += supportSpacing) {
+    const f = frames[i], p = f.v, postTop = p.y - 0.78;
+    if (postTop < 0.2) continue;
+    rod(slideStructure, V(p.x, 0, p.z), V(p.x, postTop, p.z), 0.36, K);
+    for (const side of [-1, 1]) {
+      const base = V(p.x, Math.max(0.12, postTop - 1.85), p.z);
+      rod(slideStructure, base, cross(f, side * 0.78, -0.56), 0.12, N);
+    }
+    colliders.push({ type: 'circle', x: p.x, z: p.z, r: 0.36, maxY: postTop });
   }
   const X = -46.45,
     Z = 18.1,
@@ -307,10 +322,10 @@ function buildRides(T, k) {
     for (let j = 0; j < 26; j++) {
       const z1 = z - ((j + 0.5) * run) / 26,
         v = y + ((j + 1) * h) / 26;
-      box(group, V(X, v - 0.14, z1), W, 0.29, run / 26 + 0.02, B);
-      box(group, V(X, v - 0.019, z1), W + 0.035, 0.043, run / 26 + 0.016, snow);
+      box(slideStructure, V(X, v - 0.14, z1), W, 0.29, run / 26 + 0.02, B);
+      box(slideStructure, V(X, v - 0.019, z1), W + 0.035, 0.043, run / 26 + 0.016, snow);
     }
-    if (i < 2) box(group, V(X, y + h - 0.15, z - run - land / 2), W + 0.08, 0.3, land + 0.035, I);
+    if (i < 2) box(slideStructure, V(X, y + h - 0.15, z - run - land / 2), W + 0.08, 0.3, land + 0.035, I);
     for (const s of [-1, 1]) {
       const x = X + (s * W) / 2;
       for (const [dy, r, mat] of [
@@ -318,31 +333,31 @@ function buildRides(T, k) {
         [0.6, 0.049, N],
         [1.15, 0.077, N],
       ]) {
-        rod(group, V(x, y + dy, z), V(x, y + h + dy, z - run), r, mat);
-        if (i < 2) rod(group, V(x, y + h + dy, z - run), V(x, y + h + dy, z - run - land), r, mat);
+        rod(slideStructure, V(x, y + dy, z), V(x, y + h + dy, z - run), r, mat);
+        if (i < 2) rod(slideStructure, V(x, y + h + dy, z - run), V(x, y + h + dy, z - run - land), r, mat);
       }
       for (let j = 0; j <= 4; j++) {
         const t = j / 4;
-        rod(group, V(x, y + h * t, z - run * t), V(x, y + h * t + 1.15, z - run * t), 0.066, N);
+        rod(slideStructure, V(x, y + h * t, z - run * t), V(x, y + h * t + 1.15, z - run * t), 0.066, N);
       }
     }
   }
-  box(group, V(mx, top - 0.37, mz), right - left, 0.75, front - back, I);
-  box(group, V(mx, top - 0.043, mz), right - left + 0.1, 0.086, front - back + 0.08, snow);
+  box(slideStructure, V(mx, top - 0.37, mz), right - left, 0.75, front - back, I);
+  box(slideStructure, V(mx, top - 0.043, mz), right - left + 0.1, 0.086, front - back + 0.08, snow);
   for (const x of [left + 0.63, right - 0.63])
     for (const z of [front - 0.53, back + 0.52]) {
-      rod(group, V(x, 0, z), V(x, top - 0.38, z), 0.43, B);
+      rod(slideStructure, V(x, 0, z), V(x, top - 0.38, z), 0.43, B);
       colliders.push({ type: 'circle', x, z, r: 0.6, maxY: top - 0.65 });
     }
   for (let i = 0; i < 3; i++) {
     const h = 0.5 + i * 5.85;
     for (const x of [left + 0.63, right - 0.63]) {
-      rod(group, V(x, h, front - 0.54), V(x, h + 5.76, back + 0.53), 0.15, N);
-      rod(group, V(x, h, back + 0.53), V(x, h + 5.76, front - 0.54), 0.12, K);
+      rod(slideStructure, V(x, h, front - 0.54), V(x, h + 5.76, back + 0.53), 0.15, N);
+      rod(slideStructure, V(x, h, back + 0.53), V(x, h + 5.76, front - 0.54), 0.12, K);
     }
     for (const z of [front - 0.52, back + 0.52]) {
-      rod(group, V(left + 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
-      rod(group, V(right - 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
+      rod(slideStructure, V(left + 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
+      rod(slideStructure, V(right - 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
     }
   }
   const arch = [
@@ -358,14 +373,14 @@ function buildRides(T, k) {
   ];
   for (const z of [front - 0.26, back + 0.51]) {
     tube(
-      group,
+      slideStructure,
       arch.map(([x, h]) => V(mx + x, top + h, z)),
       0.24,
       I,
       32
     );
     tube(
-      group,
+      slideStructure,
       arch.map(([x, h]) => V(mx + x, top + h + 0.12, z + 0.14)),
       0.068,
       C,
@@ -373,7 +388,7 @@ function buildRides(T, k) {
     );
   }
   for (const [x, h] of arch.slice(2, -2))
-    rod(group, V(mx + x, top + h, back + 0.49), V(mx + x, top + h, front - 0.23), 0.085, N);
+    rod(slideStructure, V(mx + x, top + h, back + 0.49), V(mx + x, top + h, front - 0.23), 0.085, N);
   function stairsGround(x, z) {
     if (Math.abs(x - X) <= W / 2 + 0.05 && z <= Z + 0.16 && z >= front - 0.1) {
       const d = Math.max(0, Z - z),
@@ -390,11 +405,11 @@ function buildRides(T, k) {
     return null;
   }
   const matrix = new T.Matrix4(),
-    wheelAngle = (t) => ((t * tau) / 106) % tau;
+    wheelAngle = (t) => ((t * tau) / wheelPeriod) % tau;
   let last = 0;
-  function wheelSeat(i) {
+  function wheelSeat(i, out) {
     const a = wheelAngle(last) + (tau * i) / 16;
-    return at(18 * Math.sin(a), -18 * Math.cos(a) - 1.21, 0.88);
+    return at(wheelRadius * Math.sin(a), -wheelRadius * Math.cos(a) - 1.16, 0.22, out);
   }
   function update(t) {
     last = t;
@@ -403,7 +418,7 @@ function buildRides(T, k) {
     for (let i = 0; i < 16; i++) {
       const a = theta + (tau * i) / 16;
       matrix.makeRotationZ(0.012 * Math.sin(0.49 * t + i));
-      matrix.setPosition(18 * Math.sin(a), -18 * Math.cos(a), 0);
+      matrix.setPosition(wheelRadius * Math.sin(a), -wheelRadius * Math.cos(a), 0);
       for (const o of pods) o.setMatrixAt(i, matrix);
     }
     for (const o of pods) o.instanceMatrix.needsUpdate = true;
@@ -415,11 +430,17 @@ function buildRides(T, k) {
     update,
     wheelSeat,
     wheelAngle,
+    wheelPeriod,
+    // Horizontal offsets share the wheel's local axes, keeping the outside camera clear of its spokes.
+    windowOffset: V(si * 1.04, 0.05, co * 1.04),
+    panoramaOffset: V(18 * co + 1.6 * si, 4.4, -18 * si + 1.6 * co),
+    slideLength,
+    slideMap: frames.filter((_, i) => i % 4 === 0 || i === sections).map(f => [f.v.x, f.v.z]),
     slidePoint,
     slideEntry: slidePoint(0),
     slideExit: slidePoint(1),
     stairFoot: V(X, 0, Z + 0.18),
     stairsGround,
-    wheelEntry: at(0, -20.185, 3.55),
+    wheelEntry: at(0, 0.815 - hubHeight, 3.55),
   };
 }

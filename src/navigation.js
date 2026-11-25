@@ -136,22 +136,10 @@ function mapArt(canvas, player, places, selected, visited, big = false) {
     [9, -33, 3],
   ])
     ell(x, z, r, r, '#75919b', '#94abb1');
-  ell(52, -19, 16.5, 12, null, '#a48ca2');
-  ell(52, -19, 12.4, 8.3, null, '#718492');
-  road(
-    [
-      [-53, -17],
-      [-58, -24],
-      [-61, -21],
-      [-56, -15],
-      [-41, -13],
-      [-39, -5],
-      [-41, 1],
-      [-30, 17],
-    ],
-    2.8,
-    '#7798a5'
-  );
+  ell(53, -19, 22, 12, null, '#a48ca2');
+  ell(53, -19, 17, 8.3, null, '#718492');
+  const slideRoute = places.find(place => place.id === 'slide')?.route;
+  if (slideRoute) road(slideRoute, 2.8, '#7798a5');
   for (const [x, z] of [
     [35, 25],
     [46, 25],
@@ -260,7 +248,7 @@ function compassArt(cnv, yaw) {
     }
   }
 }
-const skatingRink = { x: 43, z: 70, rx: 15, rz: 10 };
+const skatingRink = { x: 43, z: 70, rx: 15, rz: 10, deskX: 27, deskZ: 67.55 };
 function railFraction(rail, x, z) {
   return Math.max(-0.5, Math.min(0.5, ((x - rail.x) * rail.dx + (z - rail.z) * rail.dz) * rail.invLengthSq));
 }
@@ -360,7 +348,7 @@ function guidebook(r) {
       go: [r.wheelEntry.x, 0.82, r.wheelEntry.z],
       face: [0, 15],
       icon: 'wheel',
-      detail: '从南侧登乘台上车，随雪花轮缓缓升至高空。',
+      detail: '从南侧登乘台上车，升至约 52 米。可切换窗边广角和舱外全景。',
     },
     {
       id: 'slide',
@@ -372,6 +360,7 @@ function guidebook(r) {
       go: [r.stairFoot.x, 0.09, r.stairFoot.z + 1],
       face: [-46, -12],
       icon: 'slide',
+      route: r.slideMap,
       detail: '沿台阶登顶，或在入口按 E 直达高台。',
     },
     {
@@ -408,7 +397,7 @@ function guidebook(r) {
       go: [28.7, 0.09, 70],
       face: [47, 68],
       icon: 'skate',
-      detail: '西门直通园路。冰鞋可随处穿脱，冰面滑行，雪地步行。',
+      detail: '西门的冰鞋架可领取冰鞋。领取后可以随处穿脱，冰面滑行，雪地步行。',
     },
     {
       id: 'snow',

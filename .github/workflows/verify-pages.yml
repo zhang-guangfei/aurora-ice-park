@@ -8,6 +8,8 @@ on:
       - '.github/tests/pages.cjs'
       - '.github/tests/ice-reflection.cjs'
       - '.github/tests/skates.cjs'
+      - '.github/tests/ride-clearance.cjs'
+      - 'src/rides.js'
       - 'src/navigation.js'
       - 'src/visitors.js'
       - 'src/terrain.js'
@@ -37,7 +39,11 @@ jobs:
         env:
           SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/ice-reflection.cjs
-      - name: Check skating, snow grip and rink collisions
+      - name: Check slide geometry and wheel visibility
+        env:
+          SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: node .github/tests/ride-clearance.cjs
+      - name: Check ride cameras, skate pickup and park movement
         env:
           SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/skates.cjs
