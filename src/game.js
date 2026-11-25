@@ -101,11 +101,11 @@ function play(T) {
   const kit = makeKit(T, renderer, scene),
     sky = atmosphere(T, scene, kit),
     terrain = ground(T, renderer, scene, camera, kit),
-    post = postFX(T, renderer, scene, camera);
-  const castle = buildCastle(T, kit),
-    rides = buildRides(T, kit),
-    sculptures = art(T, kit),
-    woods = landscape(T, kit),
+    post = postFX(T, renderer, scene, camera, kit);
+  const castle = buildCastle(T, kit, terrain.lighting),
+    rides = buildRides(T, kit, terrain.lighting),
+    sculptures = art(T, kit, terrain.lighting),
+    woods = landscape(T, kit, terrain.lighting),
     people = visitors(T, kit);
   const colliders = [];
   castle.group.position.z = -44;

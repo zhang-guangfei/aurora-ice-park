@@ -1,6 +1,6 @@
 'use strict';
 
-function landscape(T, k) {
+function landscape(T, k, lighting) {
   const group = new T.Group(),
     colliders = [],
     lods = [],
@@ -103,20 +103,26 @@ function landscape(T, k) {
         }
       }
     }
-    mesh(
-      group,
-      b.geo(),
-      new T.MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.98,
-        emissive: 0x152539,
-        emissiveIntensity: 0.27,
-      })
-    );
+    const ridge = new T.MeshStandardMaterial({
+      vertexColors: true, roughness: .98, emissive: far ? 0x21314c : 0x101c2d, emissiveIntensity: .23
+    });
+    ridge.onBeforeCompile = shader => {
+      shader.vertexShader = 'varying vec3 ridgePos;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', '#include <project_vertex>\nridgePos=(modelMatrix*vec4(transformed,1.)).xyz;');
+      shader.fragmentShader = 'varying vec3 ridgePos;\n' + shader.fragmentShader.replace('#include <color_fragment>',
+        `#include <color_fragment>
+        vec3 rockN=normalize(cross(dFdx(ridgePos),dFdy(ridgePos)));
+        float cut=sin(ridgePos.x*.39+ridgePos.z*.27+sin(ridgePos.y*.43)*1.4);
+        float seams=sin(ridgePos.x*.77-ridgePos.y*.67+ridgePos.z*.61+cut)*.5+.5;
+        float snowline=smoothstep(.47,.93,abs(rockN.y)+.12*cut-.11*seams);
+        diffuseColor.rgb*=mix(vec3(.53,.61,.74),vec3(.99,1.03,1.04),snowline);
+        diffuseColor.rgb*=.88+.12*seams;`);
+    };
+    mesh(group, b.geo(), ridge);
   }
-  const pine = C(0x25434a),
-    spruce = C(0x4b6d74),
-    under = C(0x91aeb9),
+  const pine = C(0x173832),
+    spruce = C(0x315748),
+    under = C(0x839da9),
     powder = C(0xe4eff3),
     wood = C(0x64594e);
   function canopy(level, kind) {
@@ -124,7 +130,9 @@ function landscape(T, k) {
       tiers = [13, 10, 6][level],
       lean = (kind - 1) * 0.018;
     function spray(x, y, z, a, len, width, cap, fall, bend, pointed) {
-      const dx = Math.cos(a), dz = Math.sin(a), mantle = powder.clone().lerp(under, rnd() * 0.38);
+      const dx = Math.cos(a), dz = Math.sin(a), mantle = powder.clone().lerp(under, rnd() * 0.49);
+      const capped = Math.sin(x*97 + y*71 + a*3.1) > -.40 || y > .76;
+      if (!capped) mantle.lerp(spruce, .69);
       let previous;
       for (const u of [0, 0.31, 0.68, 1]) {
         const r = width * (u === 1 ? 0.015 : u === 0 ? 0.25 : u < 0.4 ? 1 : 0.73);
@@ -133,7 +141,7 @@ function landscape(T, k) {
         const lift = cap * (r / width);
         const point = (side, dy, tint) => b.v(cx - dz * r * side, cy + dy, cz + dx * r * side, tint);
         const row = [point(0,-lift*.42,pine),point(1,-lift*.15,spruce),point(.65,lift*.72,mantle),
-          point(0,lift, powder),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)];
+          point(0,lift, capped ? powder : mantle),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)];
         if (previous) for (let i = 0; i < row.length; i++) {
           const j = (i + 1) % row.length;
           b.tri(previous[i],row[i],row[j]);
@@ -321,6 +329,7 @@ function landscape(T, k) {
     driftMaterial, nearbyTrees.length
   );
   nearbyTrees.forEach((tree, i) => {
+    lighting?.contact(tree.x,tree.z,tree.h*.40,tree.h*.29,.67,tree.y);
     tr.position.set(tree.x + tree.h * .08, -.047, tree.z - tree.h * .04);
     tr.rotation.y = tree.y * .3;
     tr.scale.set(tree.h * .36, .08 + tree.h * .011, tree.h * .22);
@@ -449,6 +458,7 @@ function landscape(T, k) {
     mesh(g, new T.ConeGeometry(0.043, 0.175, 7), bronze, 0, 4.17, 0);
     colliders.push({ type: 'circle', x, z, r: 0.31 * s, maxY: 4.3 * s });
     pool(x, z, 7.6 * s);
+    lighting?.pool(x,z,5.4*s,4.5*s,0,[1,.43,.13],.64);
     lamps.push([x, 3.44 * s, z, 1.95 * s]);
   }
   for (const [x, z] of [
@@ -510,6 +520,7 @@ function landscape(T, k) {
     ball(group, x, 0.948, z, 0.11, 0.047, 0.11, snow);
     lamps.push([x, 0.77, z, 0.87]);
     pool(x, z, 2.65);
+    lighting?.pool(x,z,2.1,2.3,0,[.95,.46,.17],.38);
     colliders.push({ type: 'circle', x, z, r: 0.18, maxY: 1 });
   }
   const g = new T.BufferGeometry();

@@ -1,6 +1,6 @@
 'use strict';
 
-function buildRides(T, k) {
+function buildRides(T, k, lighting) {
   const group = new T.Group(),
     wheel = new T.Group(),
     spin = new T.Group(),
@@ -55,6 +55,22 @@ function buildRides(T, k) {
   }
   const tube = (p, points, r, mat, n) =>
     m(p, new T.TubeGeometry(new T.CatmullRomCurve3(points), n, r, 6, false), mat, V(0, 0, 0));
+  const showLight = new T.MeshBasicMaterial({ vertexColors: true, side: T.DoubleSide });
+  showLight.onBeforeCompile = shader => {
+    shader.uniforms.showClock = k.clock;
+    shader.uniforms.showNight = k.nightLight;
+    shader.vertexShader = 'varying float chaseDistance;\n' + shader.vertexShader.replace(
+      '#include <project_vertex>', '#include <project_vertex>\nchaseDistance=dot(position,vec3(.27,.15,.19));');
+    shader.fragmentShader = 'varying float chaseDistance;uniform float showClock,showNight;\n' + shader.fragmentShader.replace(
+      '#include <color_fragment>', '#include <color_fragment>\ndiffuseColor.rgb*=(.66+.52*showNight)*(.85+.38*pow(.5+.5*cos(chaseDistance-showClock*.53),3.));');
+  };
+  function litMesh(parent, pos, cols, indices) {
+    const g = new T.BufferGeometry();
+    g.setAttribute('position', new T.Float32BufferAttribute(pos,3));
+    g.setAttribute('color', new T.Float32BufferAttribute(cols,3));
+    g.setIndex(indices); g.computeVertexNormals();
+    return m(parent,g,showLight,V(0,0,0));
+  }
   const wheelRadius = 25, hubHeight = wheelRadius + 3, wheelPeriod = 106;
   const yaw = -0.96,
     co = Math.cos(yaw),
@@ -108,15 +124,39 @@ function buildRides(T, k) {
       rod(spin, rim(a + 0.18, 1.61, 0.87), rim(a, 16.86, 0.64), 0.055, N);
       rod(spin, rim(a - 0.21, 1.62, -0.84), rim(a + 0.09, 16.85, -0.64), 0.045, K);
     }
+    if (i % 4 === 1) {
+      rod(spin, rim(a+.029,12.7,.69),rim(a,16.80,.69),.058,[C,L,F][Math.floor(i/16)%3]);
+    }
     if (!(i % 2)) {
       rod(spin, rim(a, 16.86, 0.66), rim(b + 0.059, 17.94, 0.66), 0.055, N);
       orb(spin, rim(a, 17.99, 0.83), 0.12, 0.12, 0.1, i % 4 ? F : G);
     }
   }
+  // Four illuminated facets on each snow crystal give the rotating wheel a legible six-arm silhouette.
+  function frostLeaf(a, b, width, tint) {
+    const along=b.clone().sub(a), center=a.clone().lerp(b,.51);
+    const cross=V(-along.y,along.x,0).normalize().multiplyScalar(width);
+    const tip=center.clone(); tip.z+=.29;
+    const verts=[a,center.clone().add(cross),b,center.clone().sub(cross),tip];
+    const faces=[[0,1,4],[1,2,4],[2,3,4],[3,0,4]];
+    const pos=[], colors=[], indices=[];
+    for (let f=0; f<faces.length; f++) {
+      const color=tint.clone().multiplyScalar([.42,1.6,.81,.28][f]);
+      for (const j of faces[f]) { verts[j].toArray(pos,pos.length); color.toArray(colors,colors.length); indices.push(indices.length); }
+    }
+    litMesh(spin,pos,colors,indices);
+  }
   for (let i = 0; i < 6; i++) {
     const a = (tau * i) / 6 + Math.PI / 6,
       p = (r, d = 0, z = 0.93) =>
         V(Math.sin(a) * r + Math.cos(a) * d, -Math.cos(a) * r + Math.sin(a) * d, z);
+    const hue = new T.Color([0x64e9ff,0x91b3ff,0xdb9cfc,0x83e9ff,0xb69cf8,0x72d4ff][i]);
+    frostLeaf(p(1.55,0,1.1),p(13.8,0,1.1),.54,hue);
+    frostLeaf(p(12.1,0,1.04),p(15.5,0,1.04),.28,hue);
+    for (const dir of [-1,1]) {
+      frostLeaf(p(4.85,0,1.04),p(8.4,2.9*dir,1.04),.38,hue);
+      frostLeaf(p(8.45,0,1.04),p(12.8,2.45*dir,1.04),.29,hue);
+    }
     rod(spin, p(1.4), p(12.4), 0.19, I);
     rod(spin, p(1.6, 0, 1.08), p(12.4, 0, 1.08), 0.084, C);
     for (const s of [-1, 1])
@@ -130,6 +170,9 @@ function buildRides(T, k) {
       }
   }
   rod(spin, V(0, 0, -1.08), V(0, 0, 1.06), 1.5, P);
+  const centerGem = m(spin,new T.IcosahedronGeometry(1,0),I,V(0,0,1.31),V(1.27,1.27,.62));
+  centerGem.rotation.z=.34;
+  lighting?.pool(53,-19,13,9,.55,[.13,.30,.83],.60);
   batch(T, spin);
   spin.scale.set(wheelRadius / 18, wheelRadius / 18, 1);
   spin.userData.dynamic = true;
@@ -289,6 +332,26 @@ function buildRides(T, k) {
       sections
     );
   }
+  // The guide lights follow the banked outer faces, below the rim and outside the rider's envelope.
+  const palette=[0x50d8f4,0x548af1,0x936bf1,0xe379bc,0xffb36b].map(x=>new T.Color(x));
+  for (const side of [-1,1]) {
+    const pos=[],cols=[],indices=[];
+    for (let j=0;j<sections;j++) {
+      const f=frames[j], next=frames[j+1], mix=(j+.5)/sections*(palette.length-1);
+      const lo=Math.min(palette.length-2,Math.floor(mix));
+      const hue=palette[lo].clone().lerp(palette[lo+1],mix-lo);
+      for (const [height,level] of [[.56,.70],[.69,1.17],[.84,.45]]) {
+        const distance=1.076-(height-.5)*.086;
+        for (const row of [f,next]) {
+          cross(row,side*distance,height).toArray(pos,pos.length);
+          hue.clone().multiplyScalar(level*(j%8===0?.48:1)).toArray(cols,cols.length);
+        }
+      }
+      const o=j*6; indices.push(o,o+2,o+1,o+1,o+2,o+3,o+2,o+4,o+3,o+3,o+4,o+5);
+      if (side===1 && j%16===0) lighting?.pool(f.v.x,f.v.z,4.8,5.4,0,[hue.r,hue.g,hue.b],.31);
+    }
+    litMesh(group,pos,cols,indices);
+  }
   const slideStructure = new T.Group();
   slideStructure.name = 'Slide supports and access tower';
   group.add(slideStructure);
@@ -347,6 +410,11 @@ function buildRides(T, k) {
   for (const x of [left + 0.63, right - 0.63])
     for (const z of [front - 0.53, back + 0.52]) {
       rod(slideStructure, V(x, 0, z), V(x, top - 0.38, z), 0.43, B);
+      for (let j=0;j<6;j++) {
+        const y=.42+j*2.89;
+        m(slideStructure,new T.CylinderGeometry(.55,.60,.43,8),j%2?I:B,V(x,y,z));
+        if (j%2===0) m(slideStructure,new T.CylinderGeometry(.57,.57,.064,8),j===2?L:C,V(x,y+.18,z));
+      }
       colliders.push({ type: 'circle', x, z, r: 0.6, maxY: top - 0.65 });
     }
   for (let i = 0; i < 3; i++) {
@@ -386,6 +454,13 @@ function buildRides(T, k) {
       C,
       32
     );
+  }
+  // Raised pavilion crest leaves the complete launch arch open underneath.
+  for (const [x,y] of arch.slice(2,-2)) {
+    const h=1.08+1.85*(1-Math.abs(x)/5.8);
+    const crest = new T.LatheGeometry([[.08,0],[.40,.20],[.35,h*.53],[.008,h]].map(v=>new T.Vector2(...v)),7);
+    m(slideStructure,crest,Math.abs(x)<1?P:I,V(mx+x,top+y,front-.27));
+    rod(slideStructure,V(mx+x,top+y+.28,front+.033),V(mx+x,top+y+h*.59,front+.035),.052,Math.abs(x)<1?L:C);
   }
   for (const [x, h] of arch.slice(2, -2))
     rod(slideStructure, V(mx + x, top + h, back + 0.49), V(mx + x, top + h, front - 0.23), 0.085, N);

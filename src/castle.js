@@ -1,14 +1,14 @@
 'use strict';
 
-function buildCastle(T, kit) {
+function buildCastle(T, kit, lighting) {
   const group = new T.Group(),
     colliders = [],
     kitIce = kit.ice,
     pale = kitIce(0xc5e8f5),
     trim = kitIce(0x96cee5),
     dark = kitIce(0x517da7),
-    blue = kitIce(0x71add5),
-    purple = kitIce(0xa698cb),
+    blue = kitIce(0x63b8d5),
+    purple = kitIce(0x9983be),
     shade = new T.MeshStandardMaterial({ color: 0x193450, roughness: 0.28, metalness: 0.29 });
   const boxG = new T.BoxGeometry(1, 1, 1),
     rodG = new T.CylinderGeometry(1, 1, 1, 5),
@@ -16,21 +16,18 @@ function buildCastle(T, kit) {
     ring = new T.TorusGeometry(1, 0.066, 6, 32),
     up = new T.Vector3(0, 1, 0),
     cache = new Map(),
-    tex = new Uint8Array(48 * 64 * 4);
-  for (let y = 0; y < 64; y++)
-    for (let x = 0; x < 48; x++) {
-      let s = x / 47,
-        t = y / 63,
-        i = (48 * y + x) * 4,
-        l =
-          76 +
-          81 * Math.sin(Math.PI * s) +
-          44 * (1 - t) +
-          19 * Math.sin(19 * s + 7 * t + Math.cos(8 * t)) ** 12 +
-          17 * Math.sin(33 * s - 11 * t) ** 18;
-      tex.set([l, l + 3, Math.min(255, l + 11), 255], i);
-    }
-  const texture = new T.DataTexture(tex, 48, 64);
+    tex = new Uint8Array(96 * 128 * 4);
+  for (let y = 0; y < 128; y++) for (let x = 0; x < 96; x++) {
+    const u = x / 95, v = y / 127, channel = Math.sin(u * Math.PI);
+    const reed = .5 + .5 * Math.cos(u * 24 * Math.PI + Math.sin(v * 9 + u * 3) * .31);
+    const foot = Math.exp(-v * 2.2);
+    const bloom = Math.exp(-((u-.46)**2*19 + (v-.17)**2*5));
+    const bubbles = Math.max(0, Math.sin(u*151+v*21)*Math.sin(v*167-u*38)-.91)*1.8;
+    const l = Math.min(1, .12 + channel * (.17+.31*foot+.18*bloom) + reed**6*(.15+.19*foot) + bubbles);
+    const k=(y*96+x)*4;
+    tex.set([l*(184+54*bloom), l*(218+28*bloom), Math.min(255,l*255+10*reed), 255], k);
+  }
+  const texture = new T.DataTexture(tex, 96, 128);
   texture.minFilter = texture.magFilter = T.LinearFilter;
   texture.needsUpdate = true;
   const pane = (color) =>
@@ -43,10 +40,10 @@ function buildCastle(T, kit) {
       metalness: 0.12,
       roughness: 0.2,
     });
-  const W = { wall: blue, cap: kitIce(0x477cab), glass: pane(0x72d5f1), edge: kit.glow(0x9adff5, 1) },
-    E = { wall: purple, cap: kitIce(0x746dae), glass: pane(0xd293df), edge: kit.glow(0xdca9e8, 0.95) },
-    C = { wall: trim, cap: kitIce(0x6b91bc), glass: pane(0x98b6fa), edge: W.edge },
-    warm = pane(0xffcf98);
+  const W = { wall: blue, cap: kitIce(0x326da7), glass: pane(0x4bdff7), edge: kit.glow(0x9adff5, 1) },
+    E = { wall: purple, cap: kitIce(0x65539c), glass: pane(0xd781e6), edge: kit.glow(0xdca9e8, 0.95) },
+    C = { wall: trim, cap: kitIce(0x466ea5), glass: pane(0x88baff), edge: W.edge },
+    warm = pane(0xffbd70);
   const m = (g, mat, x, y, z, w = 1, h = 1, d = 1, a = 0) => {
     const o = new T.Mesh(g, mat);
     o.position.set(x, y, z);
@@ -307,6 +304,40 @@ function buildCastle(T, kit) {
     m(ring, pale, x, y, z + 0.21, r * 0.26, r * 0.26, r * 0.5);
     m(disc, warm, x, y, z + 0.12, r * 0.21, r * 0.21);
   }
+  // Carved blocks follow the two circular arcs of the portal, including a projecting keystone.
+  function archivolt(z, aw, ah, p) {
+    const crown = arch(aw, ah).slice(1, -1);
+    const outside = ([x,y]) => [x*(1+.98/aw), ah*.53+(y-ah*.53)*1.115];
+    for (let i = 0; i + 1 < crown.length; i++) {
+      const a = crown[i], b = crown[i+1];
+      const lerp = (f) => [a[0]+(b[0]-a[0])*f, a[1]+(b[1]-a[1])*f];
+      const from = lerp(.035), to = lerp(.965);
+      const voussoir = extr([from, to, outside(to), outside(from)], .31, .032);
+      m(voussoir, i%4===0 ? pale : p.wall, 0, 0, z);
+    }
+    m(extr([[-.43,0],[.43,0],[.32,.75],[0,.99],[-.32,.75]], .40, .044), pale, 0, ah-.025, z+.045);
+  }
+  const icicle = new T.LatheGeometry([[.008,0],[.054,.53],[.15,.90],[.135,1]].map(v=>new T.Vector2(...v)), 7);
+  function frozenEave(x, y, z, width, salt) {
+    for (let i = 0; i < Math.floor(width * 1.38); i++) {
+      const hash = n => { const a=Math.sin((i+salt)*n)*12415.17; return a-Math.floor(a); };
+      if (hash(11.17) < .20) continue;
+      const h = .15 + hash(5.37)**1.5 * 1.10;
+      const u = (i + .25 + hash(9.32)*.45)/Math.floor(width*1.38);
+      m(icicle, i%3 ? trim : pale, x + (u-.5)*width, y-h, z + .065*hash(6.07), .36+h*.44, h, .45+h*.33);
+    }
+  }
+  function vaultRib(a, through, b, mat, radius) {
+    const curve = new T.QuadraticBezierCurve3(V(...a),V(...through),V(...b));
+    m(new T.TubeGeometry(curve,16,radius,6,false), mat, 0,0,0);
+  }
+  for (const z of [-14, -7, 0, 7]) {
+    for (const side of [-1,1]) {
+      vaultRib([6.79*side,5.15,z-3.1],[5.2*side,9.46,z-2.3],[0,10.34,z],trim,.145);
+      vaultRib([0,10.34,z],[5.2*side,9.46,z+2.3],[6.79*side,5.15,z+3.1],pale,.12);
+    }
+    m(new T.OctahedronGeometry(.32), warm, 0,10.29,z,.82,1.5,.82);
+  }
   function entry(z, w, side, top, depth, aw, ah, r, p) {
     m(
       extr(
@@ -323,6 +354,7 @@ function buildCastle(T, kit) {
     m(frame(0.89), pale, 0, 0, z + 0.3, aw * 1.11, ah * 1.067, 1.56);
     m(frame(0.94), p.wall, 0, 0, z + 0.58, aw * 1.03, ah * 1.021, 1.3);
     m(frame(0.96), p.edge, 0, 0, z + 0.82, aw * 0.986, ah, 0.52);
+    archivolt(z + .91, aw * 1.085, ah * 1.032, p);
     const bw = (w - aw) / 2;
     for (const s of [-1, 1]) {
       block(s * (aw / 2 + bw / 2), z - depth / 2, bw, depth, side);
@@ -363,7 +395,7 @@ function buildCastle(T, kit) {
       win(s * w * 0.35, ah * 0.48, z + 0.04, 0, 1.35, ah * 0.48, s < 0 ? W : E);
     }
     block(0, z - depth / 2, aw, depth, top, ah * 0.83);
-    rose(0, ah + 0.58 * (top - ah), z + 0.2, r, p);
+    rose(0, ah + 0.58 * (top - ah), z + 0.2, r, z > 0 ? { ...p, glass: warm } : p);
     lathe(
       0,
       top - 0.05,
@@ -387,6 +419,21 @@ function buildCastle(T, kit) {
     box(trim, x, 1.02, z, 20.2, 0.35, 11.55);
     box(pale, x, 8.65, z, 20.45, 0.24, 11.83);
     block(x, z, 20.15, 11.55, 8.9);
+    frozenEave(x, 8.74, front+.31, 19.3, s<0?13:87);
+    // Short protruding ice courses catch a separate highlight on each hand-cut face.
+    for (let row=0; row<3; row++) {
+      const bottom=.27+row*.34, offset=row%2*.71;
+      for (let at=-9.68; at<9.68; at+=1.42) {
+        const lo=Math.max(-9.68,at-offset), hi=Math.min(9.68,at+1.42-offset);
+        if (hi-lo>.17) box(row===2 ? trim : p.wall,x+(lo+hi)*.5,bottom+.15,front+.066,hi-lo-.035,.30,.19+.05*Math.cos(at));
+      }
+    }
+    const tint=s<0 ? [.025,.46,1] : [.66,.085,.57];
+    for (const u of [-7.65,0,7.65]) {
+      lighting?.pool(x+u, front-44+3.5, 4.2, 7.1, s*.15, tint, .98);
+      m(disc,p.edge,x+u,1.22,front+.23,.17,.10,.15);
+    }
+    lighting?.contact(x, z-44, 13,8,.7);
     roof(x, z, 20.4, 11.85, 8.8, 13.66, p);
     for (let i = -2; i <= 2; i++) {
       const u = x + 3.84 * i;
@@ -444,6 +491,8 @@ function buildCastle(T, kit) {
     for (let i = 0; i < 3; i++)
       win(s * 7.57, 2.5, -15.1 + 4.5 * i, (s * Math.PI) / 2, 2.5, 7.7, p, true);
   }
+  lighting?.pool(0,-31.3,4.85,8.0,0,[1,.40,.105],.76);
+  lighting?.pool(0,-43.5,4.3,8.2,0,[.13,.44,.84],.62);
   entry(12.04, 15.66, 10.74, 20.76, 2.83, 7.28, 10.63, 2.03, C);
   entry(-3.31, 15.12, 12.23, 17.93, 1.29, 6.48, 9.09, 1.53, C);
   box(dark, 0, 6.22, -18.14, 15.2, 12.5, 0.85);
@@ -474,9 +523,9 @@ function buildCastle(T, kit) {
     group,
     colliders,
     update(t) {
-      W.glass.emissiveIntensity = 1.23 + 0.2 * Math.sin(t * 0.25);
-      E.glass.emissiveIntensity = 1.22 + 0.23 * Math.sin(t * 0.23 + 0.7);
-      C.glass.emissiveIntensity = 1.32 + 0.18 * Math.sin(t * 0.21 + 2.3);
+      W.glass.emissiveIntensity = 1.64 + 0.2 * Math.sin(t * 0.25);
+      E.glass.emissiveIntensity = 1.56 + 0.23 * Math.sin(t * 0.23 + 0.7);
+      C.glass.emissiveIntensity = 1.72 + 0.18 * Math.sin(t * 0.21 + 2.3);
     },
   };
 }

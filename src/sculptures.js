@@ -1,6 +1,6 @@
 'use strict';
 
-function art(T, k) {
+function art(T, k, lighting) {
   const group = new T.Group(),
     colliders = [],
     V = (...v) => new T.Vector3(...v),
@@ -383,6 +383,28 @@ function art(T, k) {
     color: 0xffdec4, emissive: 0xffce9b, emissiveIntensity: 2.4, map: paneTexture,
     emissiveMap: paneTexture, roughness: .28, metalness: .08
   });
+  const roofHooks = [], chimneys = [];
+  const wool = [0x37625a,0x803a49,0x536c71,0x7d4a34,0x495d78].map(color =>
+    new T.MeshStandardMaterial({color,roughness:.92,side:T.DoubleSide}));
+  const linen = new T.MeshStandardMaterial({color:0xe1cfa8,roughness:.92,side:T.DoubleSide});
+  const forest = new T.MeshStandardMaterial({color:0x294c39,roughness:.88});
+  const bread = new T.MeshStandardMaterial({color:0xc3874e,roughness:.86});
+  const ceramic = new T.MeshStandardMaterial({color:0x63848a,roughness:.32});
+  const copper = k.metal(0xb36d45);
+  function canopyCloth(p, cx, y, z, w, color) {
+    const stripes=9, step=w/stripes, curve=[[0,.0],[.25,.024],[.62,-.068],[.98,-.22]];
+    for(let i=0;i<stripes;i++){
+      const a=cx-w*.5+i*step, b=a+step, pos=[], ix=[];
+      for(const [depth,dy] of curve) pos.push(a,y+dy,z+depth,b,y+dy,z+depth);
+      pos.push(a,y-.35,z+.992,(a+b)/2,y-.418,z+1.00,b,y-.35,z+.992);
+      for(let row=0;row<curve.length-1;row++){const j=row*2;ix.push(j,j+2,j+1,j+1,j+2,j+3);}
+      ix.push(6,8,9,6,9,7,7,9,10);
+      const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));g.setIndex(ix);g.computeVertexNormals();
+      part(p,g,i%3===1?linen:color,0,0,0);
+    }
+    rod(p,[cx-w*.5,y-.2,z+.96],[cx+w*.5,y-.2,z+.96],.035,copper);
+    for(const x of [cx-w*.47,cx+w*.47]) rod(p,[x,y-.65,z+.03],[x,y-.24,z+.95],.029,iron);
+  }
   for (const [x, z, yaw, w, d, h, rise, shop] of [
     [34.8, 24.9, -0.49, 6.9, 5.4, 3.67, 2.7, '雪松茶屋'],
     [46.4, 24.7, -0.68, 6.4, 5.15, 3.41, 2.16, '冰灯工坊'],
@@ -392,6 +414,8 @@ function art(T, k) {
   ]) {
     const b = node(group, x, 0, z);
     b.rotation.y = yaw;
+    const shopIndex = roofHooks.length;
+    const world = (lx,ly,lz) => V(x+lx*Math.cos(yaw)+lz*Math.sin(yaw),ly,z-lx*Math.sin(yaw)+lz*Math.cos(yaw));
     const end = d / 2,
       half = w / 2,
       span = half + 0.58,
@@ -466,6 +490,36 @@ function art(T, k) {
     const counterZ = end+.36;
     colliders.push({type:'obb', x:x+cx*Math.cos(yaw)+counterZ*Math.sin(yaw),
       z:z-cx*Math.sin(yaw)+counterZ*Math.cos(yaw), w:cw+.56, d:.8, rotation:yaw, maxY:1.4});
+    canopyCloth(b,cx,2.96,end+.07,cw+.85,wool[shopIndex]);
+    const hook=world(-half*.55,h+rise*.52,end+.66);
+    roofHooks.push(hook);
+    chimneys.push(world(-half*.52,peak+.77,-end*.47));
+    const windowSpill=world(cx,.1,end+2.3);
+    lighting?.pool(windowSpill.x,windowSpill.z,3.8,6.2,-yaw,[1,.41,.105],.83);
+    lighting?.contact(x,z,half+1.15,end+1.26,.71,-yaw);
+    // Merchandise is scaled to the actual counter, behind its existing collision boundary.
+    for (let i=0;i<3;i++) {
+      const xx=cx+(.15+i*.23)*cw-cw*.48, zz=end+.60;
+      if(shopIndex===4){
+        const loaf=egg(b,bread,xx,1.46,zz,.185,.113,.12);
+        loaf.rotation.y=.24*i; rod(b,[xx-.06,1.545,zz-.03],[xx+.043,1.55,zz+.05],.009,linen);
+      } else if(shopIndex===0 || shopIndex===2) {
+        part(b,cyl(16,1,.77),shopIndex===2?linen:ceramic,xx,1.45,zz,.094,.19,.094);
+        const handle=part(b,new T.TorusGeometry(.049,.013,6,16),copper,xx+.099,1.46,zz);
+        handle.scale.x=.85;
+      } else if(shopIndex===1) {
+        egg(b,i%2?mint:gold,xx,1.53,zz,.106,.16,.103);
+        part(b,cyl(8),brass,xx,1.39,zz,.105,.052,.104);
+      } else {
+        box(b,linen,xx,1.42,zz,.23,.125,.18);box(b,copper,xx,1.484,zz,.032,.009,.18);
+      }
+    }
+    for(let i=0;i<16;i++){
+      const u=i/15, xx=(u-.5)*(w-.12);
+      const yy=h-.09+.21*Math.cos(u*Math.PI*4);
+      egg(b,forest,xx,yy,end+.39,.28,.12,.15);
+      if(i%4===1) egg(b,gold,xx,yy-.10,end+.47,.060,.067,.058);
+    }
     for (let j = 0; j < 13; j++) {
       const f = j / 12,
         px = (f - 0.5) * (w + 1.04),
@@ -485,6 +539,41 @@ function art(T, k) {
     box(b, snow, -half * 0.52, peak + 0.69, -end * 0.47, 0.83, 0.09, 0.85);
     colliders.push({ type: 'obb', x, z, w: w + 0.28, d: d + 0.55, rotation: yaw, maxY: peak });
   }
+  // Garlands are suspended from existing roof hooks and the spruce beside the market path.
+  const treeHook=V(28.9,6.72,40.8);
+  for(const [start,end] of [[treeHook,roofHooks[0]],[treeHook,roofHooks[2]],[roofHooks[2],roofHooks[4]],[roofHooks[0],roofHooks[1]],[roofHooks[1],roofHooks[3]]]){
+    const span=start.distanceTo(end), sag=Math.min(span*.061,.94);
+    const along = t => {const p=start.clone().lerp(end,t);p.y-=4*sag*t*(1-t);return p;};
+    const pts=Array.from({length:10},(_,i)=>along(i/9));
+    part(group,new T.TubeGeometry(new T.CatmullRomCurve3(pts),18,.026,5,false),iron,0,0,0);
+    const count=Math.floor(span/.86);
+    for(let i=1;i<count;i++){
+      const p=along(i/count), ornate=i%4===1, drop=ornate?.33:.105;
+      rod(group,[p.x,p.y,p.z],[p.x,p.y-drop,p.z],.015,iron);
+      egg(group,ornate?gold:i%3?gold:mint,p.x,p.y-drop-.046,p.z,ornate?.135:.078,ornate?.19:.087,ornate?.135:.078);
+      if(ornate){
+        part(group,cyl(8,.42,1),copper,p.x,p.y-drop+.08,p.z,.15,.12,.15);
+        part(group,cyl(8),brass,p.x,p.y-drop-.22,p.z,.087,.042,.087);
+      }
+    }
+  }
+  // Low-opacity, wind-bent puffs rise from the working chimneys in a single draw call.
+  const plumePos=[], phase=[];
+  for(const p of chimneys)for(let i=0;i<9;i++){p.toArray(plumePos,plumePos.length);phase.push((i+.28*Math.sin(i*3+p.x))/9);}
+  const pg=new T.BufferGeometry();
+  pg.setAttribute('position',new T.Float32BufferAttribute(plumePos,3));pg.setAttribute('phase',new T.Float32BufferAttribute(phase,1));
+  const smoke=new T.Points(pg,new T.ShaderMaterial({
+    transparent:true,depthWrite:false, uniforms:{t:k.clock,night:k.nightLight},
+    vertexShader:`attribute float phase;uniform float t;varying float age; varying float puff;
+    void main(){age=fract(t*.104+phase);puff=phase*73.;vec3 p=position;
+    p.y+=age*4.5;p.x+=age*age*2.3+.20*age*sin(t*.54+puff);p.z+=.42*age*sin(puff+age*3.);
+    vec4 mv=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*mv;gl_PointSize=clamp((.23+age*.82)*420./max(1.,-mv.z),1.,62.);}`,
+    fragmentShader:`varying float age,puff;uniform float night;void main(){
+    vec2 q=gl_PointCoord-.5;float r=length(q)*(1.+.15*sin(puff+q.x*11.)*cos(q.y*9.));
+    float a=(1.-smoothstep(.08,.51,r))*(1.-age)*smoothstep(.0,.17,age)*.235;
+    gl_FragColor=vec4(mix(vec3(.48,.50,.51),vec3(.39,.32,.31),night),a);}`
+  }));
+  smoke.frustumCulled=false;group.add(smoke);
   return {
     group,
     colliders,

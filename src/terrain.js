@@ -8,6 +8,44 @@ function ground(T, renderer, scene, camera, kit) {
   let seed = 9413;
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296,
     V = (x, y, z) => new T.Vector3(x, y, z);
+  // Bake local pools of light and soft contact shadows into one world-space texture.
+  // The same coordinates shade the snow, the rink and every paved ice path.
+  const lightSize = 384, lightSpan = 224, lightData = new Uint8Array(lightSize * lightSize * 4);
+  const irradiance = new T.DataTexture(lightData, lightSize, lightSize, T.RGBAFormat);
+  irradiance.minFilter = irradiance.magFilter = T.LinearFilter;
+  irradiance.needsUpdate = true;
+  function stampLight(x, z, rx, rz, angle, color, strength) {
+    const scale = lightSize / lightSpan, cs = Math.cos(angle), sn = Math.sin(angle);
+    const ex = Math.hypot(rx * cs, rz * sn), ez = Math.hypot(rx * sn, rz * cs);
+    const px = (x / lightSpan + .5) * lightSize - .5, pz = (z / lightSpan + .5) * lightSize - .5;
+    const maxX = Math.min(lightSize - 1, Math.ceil(px + ex * scale));
+    const maxZ = Math.min(lightSize - 1, Math.ceil(pz + ez * scale));
+    for (let j = Math.max(0, Math.floor(pz - ez * scale)); j <= maxZ; j++) {
+      for (let i = Math.max(0, Math.floor(px - ex * scale)); i <= maxX; i++) {
+        const dx = (i - px) / scale, dz = (j - pz) / scale;
+        const u = (dx * cs + dz * sn) / rx, v = (-dx * sn + dz * cs) / rz;
+        const d = 1 - u * u - v * v;
+        if (d <= 0) continue;
+        const f = d * d * strength * 255, k = 4 * (j * lightSize + i);
+        if (color) {
+          for (let c = 0; c < 3; c++) lightData[k+c] = Math.min(255, lightData[k+c] + f * color[c]);
+        } else lightData[k+3] = Math.max(lightData[k+3], Math.min(255, f));
+      }
+    }
+  }
+  const lighting = {
+    pool: (x, z, rx, rz, angle, color, strength) => stampLight(x, z, rx, rz, angle, color, strength),
+    contact: (x, z, rx, rz, strength, angle = 0) => stampLight(x, z, rx, rz, angle, null, strength),
+  };
+  function groundLight(shader, varying, receive) {
+    shader.uniforms.parkIrradiance = { value: irradiance };
+    shader.uniforms.parkNight = kit.nightLight || { value: 1 };
+    shader.fragmentShader = 'uniform sampler2D parkIrradiance;uniform float parkNight;\n' + shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      'vec4 bakedLight=texture2D(parkIrradiance,' + varying + '.xz/224.+.5);\n' +
+      'outgoingLight*=1.-.53*bakedLight.a; outgoingLight+=bakedLight.rgb*' + receive + '*(.13+.87*parkNight);\n#include <opaque_fragment>'
+    );
+  }
   const map = kit.snowMap.clone();
   map.repeat.set(90, 90);
   map.needsUpdate = true;
@@ -17,6 +55,20 @@ function ground(T, renderer, scene, camera, kit) {
   gm.normalMap.repeat.set(80, 80);
   gm.normalMap.needsUpdate = true;
   gm.vertexColors = true;
+  gm.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec3 snowWorld;\n' + shader.vertexShader.replace(
+      '#include <project_vertex>', '#include <project_vertex>\nsnowWorld=(modelMatrix*vec4(transformed,1.)).xyz;'
+    );
+    shader.fragmentShader = 'varying vec3 snowWorld;\n' + shader.fragmentShader.replace(
+      '#include <color_fragment>', `#include <color_fragment>
+      float crossWind=snowWorld.x*.74+snowWorld.z*.42;
+      float folds=sin(crossWind+sin(snowWorld.z*.54)*.93+sin(snowWorld.x*.36)*.51);
+      float bank=smoothstep(.28,.93,folds)*(.55+.45*sin(snowWorld.z*.27+snowWorld.x*.18));
+      diffuseColor.rgb*=vec3(.90,.94,.99)+vec3(.10,.077,.055)*bank;`
+    );
+    groundLight(shader, 'snowWorld', '.82');
+  };
+  gm.customProgramCacheKey = () => 'wind-snow-pools-1';
   const field = new T.PlaneGeometry(470, 470, 96, 96).rotateX(-Math.PI / 2),
     a = field.attributes.position,
     col = new Float32Array(a.count * 3);
@@ -165,8 +217,9 @@ vec2 reflectionUV() {
  }
  #include <opaque_fragment>`
         );
+      groundLight(s, 'worldIce', '.48');
     };
-    m.customProgramCacheKey = () => 'mirror-floe-6';
+    m.customProgramCacheKey = () => 'mirror-floe-pools-7';
     return m;
   }
   const road = makeRoad(0x7c9eaf, 0.77),
@@ -354,32 +407,6 @@ vec2 reflectionUV() {
   ring(-1, 10, 18.7, 0.1, 0.69, 0.094);
   ring(-1, 10, 17.8, 0.045, 0.69, 0.095);
   ring(43, 70, 14.55, 0.055, 0.658, 0.098);
-  const beamGeo = new T.CylinderGeometry(1, 0.12, 1, 22, 1, true),
-    beamMat = new T.ShaderMaterial({
-      transparent: true,
-      blending: T.AdditiveBlending,
-      side: T.DoubleSide,
-      depthWrite: false,
-      uniforms: { t: kit.clock, fun: kit.festival },
-      vertexShader:
-        'varying vec2 v;void main(){v=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-      fragmentShader:
-        'varying vec2 v;uniform float t,fun;void main(){float fade=pow(max(0.,1.-v.y),1.8);vec3 c=mix(vec3(.31,.56,.97),vec3(.82,.37,.85),smoothstep(.2,.8,sin(t*.23+v.x)));gl_FragColor=vec4(c,(.035+.044*fun)*fade);}',
-    });
-  for (const [x, z, h, rot] of [
-    [-21, -34, 23, 0.18],
-    [18, -35, 27, -0.17],
-    [-10, -32, 21, -0.15],
-    [10, -33, 20, 0.13],
-    [-12, 9, 12, -0.13],
-  ]) {
-    const b = new T.Mesh(beamGeo, beamMat);
-    b.scale.set(2.5, h, 2.5);
-    b.rotation.z = rot;
-    b.position.set(x - Math.sin(rot) * h * 0.5, 0.15 + h * 0.5, z);
-    b.renderOrder = 1;
-    scene.add(b);
-  }
   const look = V(0, 0, 0),
     up = V(0, 0, 0),
     bias = new T.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
@@ -418,6 +445,7 @@ vec2 reflectionUV() {
   }
   return {
     road,
+    lighting,
     rt,
     isIce,
     resize(w, h, level) {
