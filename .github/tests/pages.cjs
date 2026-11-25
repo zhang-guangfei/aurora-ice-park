@@ -161,9 +161,33 @@ async function verifyPark() {
     await page.close();
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
     phone.setDefaultTimeout(90000);
-    await phone.addInitScript(() => localStorage.setItem('frostbound.park.v1', JSON.stringify({ quality: 'low' })));
+    phone.on('pageerror',error=>errors.push(error.message));
+    phone.on('console',m=>{if(m.type()==='error' && /WebGLProgram|shader error|context lost/i.test(m.text())) errors.push(m.text());});
+    // Enter as a new touch visitor to exercise the actual default mobile quality setting.
     await phone.goto(site.href, { waitUntil: 'domcontentloaded' });
     await phone.waitForFunction(() => document.querySelector('#loading')?.hidden === true, null, { timeout: 90000 });
+    assert.equal(await phone.evaluate(()=>JSON.parse(localStorage.getItem('frostbound.park.v1')).quality),'medium');
+    const skyLight = async () => {
+      const png=PNG.sync.read(await phone.screenshot({clip:{x:158,y:175,width:70,height:45}, style:'#hud, #touch, #toast, #banner { visibility: hidden !important; }'}));
+      let total=0;
+      for(let i=0;i<png.data.length;i+=4) total+=png.data[i]*.21+png.data[i+1]*.72+png.data[i+2]*.07;
+      return total/(png.width*png.height);
+    };
+    const night=await skyLight();
+    await phone.locator('#timeBtn').tap();
+    assert.equal(await phone.locator('#timeLabel').textContent(),'黄昏');
+    await phone.locator('#timeBtn').tap();
+    assert.equal(await phone.locator('#timeLabel').textContent(),'白天');
+    // Allow the sky interpolation to settle even on a software GPU.
+    let day=0;
+    for(let i=0;i<6;i++){day=await skyLight();if(day>night+12)break;await delay(500);}
+    assert.ok(day>night+12,'The live portrait sky should brighten from night to day: '+night+' -> '+day);
+    await phone.locator('#timeBtn').tap();
+    assert.equal(await phone.locator('#timeLabel').textContent(),'夜晚');
+    console.log('Live portrait lighting: default medium preset, night/dusk/day controls and measured sky brightness '+night.toFixed(1)+' -> '+day.toFixed(1));
+    await phone.locator('#settingsBtn').tap();
+    await phone.locator('[data-option="quality"][data-value="low"]').tap();
+    await phone.locator('#closeDlg').tap();
     await phone.locator('#skatesBtn').tap();
     assert.equal(await phone.locator('[data-place].active span').textContent(), '冰上游乐场');
     await phone.locator('#travelBtn').tap();
@@ -178,6 +202,7 @@ async function verifyPark() {
     assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
     await phone.locator('#skatesBtn').tap();
     assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'true');
+    assert.deepEqual(errors,[]);
     console.log('Touch HUD: found the rink, claimed skates at the rack and changed footwear away from the rink on a 390px screen.');
   } finally {
     await browser.close();
