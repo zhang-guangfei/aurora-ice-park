@@ -102,6 +102,7 @@ function play(T) {
     sky = atmosphere(T, scene, kit),
     terrain = ground(T, renderer, scene, camera, kit),
     post = postFX(T, renderer, scene, camera, kit);
+  sky.setGroundLight(terrain.lighting.texture);
   const castle = buildCastle(T, kit, terrain.lighting),
     rides = buildRides(T, kit, terrain.lighting),
     sculptures = art(T, kit, terrain.lighting),

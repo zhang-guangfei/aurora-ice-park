@@ -81,16 +81,42 @@ function art(T, k, lighting) {
     g.computeVertexNormals();
     return part(p, g, mat, 0, 0, 0);
   }
+  const prisms=Array.from({length:3},(_,variant)=>{
+    const pos=[],uv=[],rings=[];
+    const shape=[[.66,0],[.90,.105],[1,.55],[.95,.78]];
+    for(const [row,[radius,height]] of shape.entries()){
+      const ring=[];
+      for(let i=0;i<6;i++){
+        const a=A*i/6+.07*variant,flute=1+.10*Math.sin(i*7.6+variant);
+        const y=height+(row===3?.087*Math.cos(a+.6*variant):0);
+        ring.push([Math.cos(a)*radius*flute+.08*y,y,Math.sin(a)*radius*(.88+.04*variant)]);
+      }
+      rings.push(ring);
+    }
+    const vertex=(p,u)=>{pos.push(...p);uv.push(u,p[1]);};
+    for(let i=0;i<6;i++){
+      const j=(i+1)%6, u=i/6,v=(i+1)/6;
+      for(let row=0;row<3;row++){
+        const a=rings[row],b=rings[row+1];
+        vertex(a[i],u);vertex(b[i],u);vertex(b[j],v);
+        vertex(a[i],u);vertex(b[j],v);vertex(a[j],v);
+      }
+      vertex(rings[3][i],u);vertex([.22+.05*variant,1,-.13],(u+v)*.5);vertex(rings[3][j],v);
+    }
+    const g=new T.BufferGeometry();g.setAttribute('position',new T.Float32BufferAttribute(pos,3));
+    g.setAttribute('uv',new T.Float32BufferAttribute(uv,2));g.computeVertexNormals();return g;
+  });
   function shard(p, mat, x, y, z, r, h, tilt) {
-    const o = node(p, x, y, z);
-    o.rotation.z = tilt;
-    part(o, cyl(6, 0.91, 0.7), mat, 0, h * 0.32, 0, r, h * 0.64, r);
-    part(o, cyl(6, 0.015, 1), mat, r * 0.025, h * 0.82, 0, r * 0.91, h * 0.36, r * 0.91).rotation.z =
-      -0.04;
+    const o=node(p,x,y,z),variant=Math.abs(Math.round((x+z)*6+h*2))%prisms.length;
+    o.rotation.z=tilt;
+    part(o,prisms[variant],mat,0,0,0,r,h,r);
     return o;
   }
   function stand(x, z, w, d, m) {
     const a = node(group, x, 0, z);
+    lighting?.contact(x,z,w*1.25,d*1.35,.67);
+    const tint=m.color;
+    lighting?.pool(x,z+1.0,w*1.88,d*2.1,0,tint ? [tint.r,tint.g,tint.b] : [.15,.4,.65],.47);
     for (const [y, wi, hi, ma] of [
       [0.17, 1, 0.34, iron],
       [0.38, 0.98, 0.1, brass],
@@ -103,7 +129,7 @@ function art(T, k, lighting) {
     return node(a, 0, 0.89, 0);
   }
   const gem = stand(-12, 9, 3.6, 3.6, mint);
-  shard(gem, k.ice(0x6de1df, { transmission: 0.19, thickness: 2.8 }), 0, 0, 0, 1.26, 8.5, -0.05);
+  shard(gem, k.ice(0x4bc8d8, { transmission: 0.49, thickness: 2.35, emissiveIntensity: .12 }), 0, 0, 0, 1.26, 8.5, -0.05);
   for (let i = 0; i < 7; i++) {
     const a = (i * A) / 7,
       o = node(gem, Math.cos(a) * 1.38, 0, Math.sin(a) * 1.38);

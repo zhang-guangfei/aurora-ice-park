@@ -482,6 +482,58 @@ function landscape(T, k, lighting) {
     [-57.7, 61.8],
   ])
     lamp(x, z, Math.abs(x) > 15);
+  // Traditional ice lanterns have solid, carved shells surrounding a recessed amber light.
+  const lanternIce = k.ice(0x63cde6,{thickness:.78,transmission:.49,roughness:.23});
+  const lanternLip = k.ice(0xa9e2ed,{roughness:.16});
+  const lampFoot = lathe([[.48,0],[.62,.07],[.63,.16],[.50,.23],[.47,.29]],8);
+  const lampCap = lathe([[.41,0],[.52,.12],[.56,.16],[.46,.23],[.24,.35],[.15,.37],[.14,.42]],8);
+  const shell = lathe([[.38,0],[.43,.11],[.46,.88],[.40,1.02]],8);
+  function iceLantern(x,z,height,tint) {
+    const node=new T.Group(); node.position.set(x,.028,z); node.rotation.y=.16*x; node.scale.setScalar(height); group.add(node);
+    mesh(node,lampFoot,lanternLip);
+    mesh(node,shell,lanternIce,0,.24,0);
+    mesh(node,lampCap,lanternLip,0,1.24,0);
+    ball(node,0,1.73,0,.096,.14,.096,lanternIce);
+    for(let j=0;j<8;j++){
+      const angle=j*A/8, cx=Math.sin(angle),cz=Math.cos(angle);
+      const strip=mesh(node,new T.BoxGeometry(.14,.67,.026),tint,.422*cx,.82,.422*cz);
+      strip.rotation.y=angle;
+      rod(node,V(.397*cx,.34,.397*cz),V(.435*cx,1.22,.435*cz),.029,lanternLip);
+    }
+    const atY=.85*height;
+    lighting?.pool(x,z,3.1*height,3.9*height,.2,[1,.43,.13],.78);
+    lighting?.contact(x,z,1.13*height,.85*height,.56);
+    lamps.push([x,atY,z,1.2*height]);
+    colliders.push({type:'circle',x,z,r:.62*height,maxY:1.81*height});
+  }
+  for(const [x,z,h] of [[-10.4,58.0,1.38],[10.55,57.7,1.18],[-11.8,24.5,1.03],[11.9,24.0,1.14],[-14.4,-18.0,1.18],[14.1,-18.4,1.33]]){
+    iceLantern(x,z,h,warm);
+  }
+  const twinkles = [], wire = k.metal(0x514b37);
+  for(const tree of trees.filter(tree => (tree.x===28.9 && tree.z===40.8) || (tree.x===-15.8 && tree.z===50) || (tree.x===16.1 && tree.z===48.6))){
+    const market=tree.x===28.9, turns=market?5:3.65, samples=market?105:74, pts=[];
+    for(let i=0;i<=samples;i++){
+      const u=i/samples, y=tree.h*(.19+.755*u), angle=tree.y+turns*A*u;
+      const r=(.32*tree.width*tree.h)*(.12+.88*(1-u)**.82);
+      const p=V(tree.x+r*Math.cos(angle),y,tree.z+r*Math.sin(angle));pts.push(p);
+      if(i%2===0)twinkles.push({p,shade:i%11===0?0x85d7d6: i%5===0?0xffb76b:0xffe1a1,r:market?.083:.071});
+    }
+    mesh(group,new T.TubeGeometry(new T.CatmullRomCurve3(pts),samples,.021,4,false),wire);
+    lighting?.pool(tree.x,tree.z,3.7,3.1,0,[.93,.49,.19],.39);
+    if(market){
+      const outline=new T.Shape();
+      for(let i=0;i<10;i++){const a=Math.PI*.5+A*i/10,r=i%2?.19:.45;
+        if(i)outline.lineTo(r*Math.cos(a),r*Math.sin(a));else outline.moveTo(r*Math.cos(a),r*Math.sin(a));}
+      outline.closePath();
+      mesh(group,new T.ExtrudeGeometry(outline,{depth:.09,bevelEnabled:true,bevelSize:.032,bevelThickness:.029,bevelSegments:1}),warm,tree.x,tree.h+.075,tree.z);
+    }
+  }
+  if(twinkles.length){
+    const beads=new T.InstancedMesh(sphere,new T.MeshBasicMaterial({color:0xffffff}),twinkles.length);
+    twinkles.forEach(({p,shade,r},i)=>{tr.position.copy(p);tr.rotation.set(0,0,0);tr.scale.set(r,r*1.15,r);tr.updateMatrix();
+      beads.setMatrixAt(i,tr.matrix);beads.setColorAt(i,new T.Color(shade).multiplyScalar(1.6));});
+    beads.computeBoundingSphere();group.add(beads);
+  }
   const lanterns = lamps.slice();
   const localLights = lanterns.slice(0, 2).map(lamp => {
     const light = new T.PointLight(0xffab64, 64, 16, 2);

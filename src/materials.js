@@ -60,11 +60,28 @@ function makeKit(T, renderer, scene) {
   const snowMap = new T.CanvasTexture(sf);
   snowMap.colorSpace = T.SRGBColorSpace;
   snowMap.wrapS = snowMap.wrapT = T.RepeatWrapping;
+  // A separate wind-packed snow normal keeps the fracture pattern exclusive to ice.
+  const powderSize=128, relief=new Float32Array(powderSize*powderSize);
+  const powderPixels=new Uint8Array(relief.length*4), tau=Math.PI*2;
+  for(let y=0;y<powderSize;y++)for(let x=0;x<powderSize;x++){
+    const u=x/powderSize,v=y/powderSize;
+    const wind=Math.sin(tau*(u*2+v)+.80*Math.sin(tau*v*2)+.39*Math.sin(tau*u));
+    relief[y*powderSize+x]=.43*wind+.24*Math.sin(tau*(3*u-7*v)+1.32*wind)+.14*rnd();
+  }
+  const height=(x,y)=>relief[(y&127)*128+(x&127)];
+  for(let y=0;y<powderSize;y++)for(let x=0;x<powderSize;x++){
+    const dx=(height(x+1,y)-height(x-1,y))*1.65, dy=(height(x,y+1)-height(x,y-1))*1.65;
+    const n=1/Math.hypot(dx,dy,1), i=(y*powderSize+x)*4;
+    powderPixels.set([128-126*dx*n,128-126*dy*n,128+127*n,255],i);
+  }
+  const snowNormal=new T.DataTexture(powderPixels,powderSize,powderSize);
+  snowNormal.wrapS=snowNormal.wrapT=T.RepeatWrapping;snowNormal.generateMipmaps=true;
+  snowNormal.minFilter=T.LinearMipmapLinearFilter;snowNormal.magFilter=T.LinearFilter;snowNormal.needsUpdate=true;
   const snow = new T.MeshStandardMaterial({
     color: 0xeaf6ff,
     map: snowMap,
-    normalMap: norm,
-    normalScale: new T.Vector2(0.12, 0.12),
+    normalMap: snowNormal,
+    normalScale: new T.Vector2(0.27, 0.27),
     roughness: 0.81,
     metalness: 0.025,
   });
@@ -245,6 +262,18 @@ function makeKit(T, renderer, scene) {
        totalEmissiveRadiance+=spectrum*(.012+uFest*(.28+.22*sin(icePos.y*.25-uClock*2.)))*(.34+fr);`
         );
     };
+    const coat=mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader,renderer) => {
+      coat(shader,renderer);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>',
+        `// A slab boundary affects reflections and transmitted light as well as the surface pigment.
+        vec2 lipUV=abs(fract(course+vec2(.48,.467))-.5);
+        float lip=max(1.-smoothstep(.009,.021+aa.x,lipUV.x),1.-smoothstep(.014,.026+aa.y,lipUV.y));
+        float gradedCut=cut*(1.-smoothstep(.30,1.15,max(aa.x,aa.y)));
+        outgoingLight*=1.+gradedCut*((block-.54)*.25-.54*joint);
+        outgoingLight+=gradedCut*max(0.,lip-joint*.69)*vec3(.11,.19,.24)*(.47+.53*uNight);
+        #include <opaque_fragment>`);
+    };
     mat.userData.glassTransmission = mat.transmission;
     mat.customProgramCacheKey = () => 'park-glacier-inclusions-5';
     cache.set(k, mat);
@@ -270,6 +299,7 @@ function makeKit(T, renderer, scene) {
     festival,
     nightLight,
     normal: norm,
+    snowNormal,
     snowMap,
     quality(q) {
       for (const m of cache.values()) {

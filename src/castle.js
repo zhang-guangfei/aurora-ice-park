@@ -181,7 +181,8 @@ function buildCastle(T, kit, lighting) {
         );
       if (!small && c >= 0) {
         const rr = r * 0.996 * Math.cos(Math.PI / n);
-        win(x + s * rr, y + h * 0.11, z + c * rr, a, 2 * r * Math.sin(Math.PI / n) * 0.47, h * 0.233, p);
+        win(x + s * rr, y + h * 0.11, z + c * rr, a, 2 * r * Math.sin(Math.PI / n) * 0.47, h * 0.233,
+          rich && (i+(x>0?1:0))%4===0 ? {...p,glass:warm} : p);
       }
       const b = a - Math.PI / n,
         ss = Math.sin(b),
@@ -239,6 +240,18 @@ function buildCastle(T, kit, lighting) {
         );
       }
     }
+    if (rich && r > 3.7) {
+      // Lantern gallery at the spring of the spire, with clear space between its pinnacles.
+      const shoulder=r*1.04, galleryY=ry+.18;
+      for(let i=0;i<n;i++){
+        const a=(i+.5)*Math.PI*2/n, tx=x+shoulder*Math.sin(a),tz=z+shoulder*Math.cos(a);
+        const ht=r*(i%2?.61:.89);
+        lathe(tx,galleryY,tz,[[.23,0],[.25,.22],[.175,ht*.40],[.205,ht*.58],[.072,ht*.82],[.009,ht]],6,p.wall);
+        lathe(tx,galleryY+ht*.48,tz,[[.166,0],[.218,.069],[.17,.126]],6,p.edge);
+        const b=a+Math.PI*2/n;
+        bar(trim,[tx,galleryY+.49,tz],[x+shoulder*Math.sin(b),galleryY+.49,z+shoulder*Math.cos(b)],.093);
+      }
+    }
     if (rich)
       lathe(
         x,
@@ -289,6 +302,11 @@ function buildCastle(T, kit, lighting) {
     m(disc, p.glass, x, y, z + 0.04, r, r);
     m(ring, dark, x, y, z + 0.09, r * 1.1, r * 1.1, r * 1.25);
     m(ring, pale, x, y, z + 0.14, r, r, r);
+    for(let i=0;i<8;i++){
+      const a=i*Math.PI/4, pts=[[.23,0],[.57,-.105],[.85,0],[.57,.105]];
+      const petal=pts.map(([l,d])=>[r*(l*Math.sin(a)+d*Math.cos(a)),r*(l*Math.cos(a)-d*Math.sin(a))]);
+      m(extr(petal,.038,.012), [C.glass,warm,W.glass,E.glass][i%4],x,y,z+.102);
+    }
     for (let i = 0; i < 8; i++) {
       const a = (i * Math.PI) / 4,
         s = Math.sin(a),
@@ -305,6 +323,31 @@ function buildCastle(T, kit, lighting) {
     m(disc, warm, x, y, z + 0.12, r * 0.21, r * 0.21);
   }
   // Carved blocks follow the two circular arcs of the portal, including a projecting keystone.
+  const ashlarFace=extr([[-.47,-.5],[.43,-.5],[.5,-.39],[.5,.41],[.44,.5],[-.455,.5],[-.5,.40],[-.5,-.41]],1,.021);
+  function portalCourses(z,w,side,top,aw,ah,roseRadius,p){
+    const half=w/2, roseY=ah+.58*(top-ah);
+    for(let row=0;row*.72+.28<top;row++){
+      const y=row*.72+.40, high=y+.34;
+      const wallHalf=high<side?half:half*Math.max(0,(top-high)/(top-side));
+      let archHalf=0;
+      if(y<ah*1.03){
+        const f=Math.max(0,Math.min(.866,(y-ah*.54)/(ah*.46)*.866));
+        archHalf=aw*(Math.sqrt(1-f*f)-.5)+.47;
+      }
+      for(let j=-6;j<6;j++){
+        const left=(j+(row%2)*.49)*1.60, right=left+1.57;
+        for(const sign of [-1,1]){
+          const a=Math.max(left,archHalf,0),b=Math.min(right,wallHalf-.13),mid=(a+b)*.5;
+          if(b-a<.26)continue;
+          // Leave the glazed lancets and the rose tracery fully exposed.
+          if(y>ah*.46 && y<ah*.99 && Math.abs(mid-w*.35)<1.16)continue;
+          if(Math.hypot(mid,y-roseY)<roseRadius*1.32+.54)continue;
+          const cut=.065+.045*(.5+.5*Math.sin(j*9.41+row*6.77+sign));
+          m(ashlarFace,(row+Math.abs(j))%7===0?trim:p.wall,sign*mid,y,z+.024,(b-a),.67,cut);
+        }
+      }
+    }
+  }
   function archivolt(z, aw, ah, p) {
     const crown = arch(aw, ah).slice(1, -1);
     const outside = ([x,y]) => [x*(1+.98/aw), ah*.53+(y-ah*.53)*1.115];
@@ -354,7 +397,12 @@ function buildCastle(T, kit, lighting) {
     m(frame(0.89), pale, 0, 0, z + 0.3, aw * 1.11, ah * 1.067, 1.56);
     m(frame(0.94), p.wall, 0, 0, z + 0.58, aw * 1.03, ah * 1.021, 1.3);
     m(frame(0.96), p.edge, 0, 0, z + 0.82, aw * 0.986, ah, 0.52);
+    portalCourses(z,w,side,top,aw,ah,r,p);
     archivolt(z + .91, aw * 1.085, ah * 1.032, p);
+    for(const [i,pt] of arch(aw,ah).slice(2,-2).entries()){
+      const h=.17+.33*(.5+.5*Math.sin(i*17.1+z));
+      m(icicle,trim,pt[0],pt[1]-h+.16,z+.50,.34+h*.42,h,.38+h*.27);
+    }
     const bw = (w - aw) / 2;
     for (const s of [-1, 1]) {
       block(s * (aw / 2 + bw / 2), z - depth / 2, bw, depth, side);

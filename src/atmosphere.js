@@ -68,11 +68,16 @@ function atmosphere(T, scene, kit) {
       transparent: true,
       blending: star ? T.AdditiveBlending : T.NormalBlending,
       depthWrite: false,
-      uniforms: { t: u.t, eye: { value: new T.Vector3() }, dpr: { value: 1 }, fade: { value: 1 } },
+      uniforms: { t: u.t, eye: { value: new T.Vector3() }, spillMap: { value: null }, night: kit.nightLight, dpr: { value: 1 }, fade: { value: 1 } },
       vertexShader: star
         ? `uniform float t,dpr;attribute float seed;varying float a;void main(){a=(.64+.36*sin(position.z+t*.55))*(.48+.49*seed);gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);gl_PointSize=max(1.,(.5+2.1*pow(seed,4.))*dpr);}`
-        : `uniform float t,dpr;uniform vec3 eye;attribute float seed;varying float a;void main(){vec3 p=position;p.y-=t*(.65+.8*seed);p.x+=t*.47+sin(t*.4+seed*39.)*.39;p.z+=sin(t*.34+seed*20.)*.44;p=mod(p-eye+vec3(21.,10.,21.),vec3(42.,24.,42.))-vec3(21.,10.,21.)+eye;vec4 v=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*v;gl_PointSize=clamp((23.+seed*20.)/max(1.,-v.z),.7,4.)*dpr;a=(.2+.48*seed)*smoothstep(.7,3.,-v.z)*(1.-smoothstep(15.,30.,-v.z))*smoothstep(-.1,.5,p.y);}`,
-      fragmentShader: `uniform float fade;varying float a;void main(){float r=2.*length(gl_PointCoord-.5);gl_FragColor=vec4(.79,.9,1.,a*fade*(1.-smoothstep(.08,1.,r)));}`,
+        : `uniform float t,dpr;uniform vec3 eye;attribute float seed;varying float a;varying vec3 flakeWorld;void main(){vec3 p=position;p.y-=t*(.65+.8*seed);p.x+=t*.47+sin(t*.4+seed*39.)*.39;p.z+=sin(t*.34+seed*20.)*.44;p=mod(p-eye+vec3(21.,10.,21.),vec3(42.,24.,42.))-vec3(21.,10.,21.)+eye;flakeWorld=p;vec4 v=modelViewMatrix*vec4(p,1.);gl_Position=projectionMatrix*v;gl_PointSize=clamp((23.+seed*20.)/max(1.,-v.z),.7,4.)*dpr;a=(.2+.48*seed)*smoothstep(.7,3.,-v.z)*(1.-smoothstep(15.,30.,-v.z))*smoothstep(-.1,.5,p.y);}`,
+      fragmentShader: star ? `uniform float fade;varying float a;void main(){float r=2.*length(gl_PointCoord-.5);gl_FragColor=vec4(.79,.9,1.,a*fade*(1.-smoothstep(.08,1.,r)));}`
+        : `uniform float fade,night;uniform sampler2D spillMap;varying float a;varying vec3 flakeWorld;
+        void main(){vec2 q=gl_PointCoord-.5;q.x=q.x*1.2+q.y*.23;float r=2.*length(q);
+        vec3 reflected=texture2D(spillMap,flakeWorld.xz/224.+.5).rgb;
+        vec3 tint=mix(vec3(.85,.93,.99),vec3(.44,.64,.86)+1.55*reflected*exp(-max(flakeWorld.y,0.)*.098),night);
+        gl_FragColor=vec4(tint,a*fade*(1.-smoothstep(.12,1.,r)));}`,
     });
     const o = new T.Points(g, mat);
     o.frustumCulled = false;
@@ -103,6 +108,7 @@ function atmosphere(T, scene, kit) {
   return {
     snow,
     moon,
+    setGroundLight(texture) { snow.material.uniforms.spillMap.value = texture; },
     setMode(mode) {
       target = states[mode];
       hemi.color.setHex(target[4]);
@@ -204,7 +210,7 @@ function postFX(T, renderer, scene, camera, kit) {
          vec3 beams=vec3(.034,.23,.61)*lightShaft(eye,ray,dist,vec3(-22.,.6,-34.),vec3(-28.,28.,-41.),3.5);
          beams+=vec3(.43,.056,.34)*lightShaft(eye,ray,dist,vec3(20.,.6,-34.),vec3(26.,25.,-42.),3.3);
          beams+=vec3(.58,.27,.08)*lightShaft(eye,ray,dist,vec3(1.,1.,-35.),vec3(-.8,15.,-40.),2.);
-         beams+=vec3(.085,.27,.37)*lightShaft(eye,ray,dist,vec3(-2.,.4,10.),vec3(-3.,11.,8.),2.2);
+         beams+=vec3(.085,.27,.37)*lightShaft(eye,ray,dist,vec3(-12.,.4,9.),vec3(-12.6,11.,7.),2.2);
          col+=beams*night*.35;
        }
        return col;

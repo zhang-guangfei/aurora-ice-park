@@ -38,15 +38,16 @@ async function run() {
         const anchor = '  try {\n    loop();';
         assert.ok(body.includes(anchor));
         const lab = [
-          '  let viewNumber = 0;',
+          '  let viewNumber = 0; renderer.info.autoReset = false;',
           '  window.renderParkFrame = ([name, eye, aim, preset, light]) => {',
           '    const t = 16.25; quality = preset; setTime(light); resize();',
           '    camera.position.fromArray(eye); camera.lookAt(...aim); camera.updateMatrixWorld();',
           '    rides.update(t); castle.update(t); sculptures.update(t); woods.update(++viewNumber + t, camera.position);',
           '    people.update(t, 0, player); people.avatar.visible = false; kit.clock.value = t;',
           '    sky.update(t, 10, camera.position);',
-          '    terrain.reflect(reflectionExclusions, viewNumber * 10); post.render();',
-          '    return canvas.toDataURL("image/jpeg", .91);',
+          '    renderer.info.reset(); terrain.reflect(reflectionExclusions, viewNumber * 10); post.render();',
+          '    const { calls,triangles }=renderer.info.render;',
+          '    return { image:canvas.toDataURL("image/jpeg",.91), calls,triangles };',
           '  };',
           '  return;',
         ].join('\n');
@@ -57,10 +58,29 @@ async function run() {
     await page.goto('https://park.test/');
     await page.waitForFunction(() => !!window.renderParkFrame, null, { timeout: 90000 });
     const shots = [];
-    for (const view of views) {
-      const data = await page.evaluate(view => window.renderParkFrame(view), view);
-      fs.writeFileSync(path.join(out, view[0] + '.jpg'), Buffer.from(data.split(',')[1], 'base64'));
-      shots.push(data);
+    for (const [index, view] of [...views, ['portrait', ...views[0].slice(1,3), 'medium', 'night']].entries()) {
+      if (index===views.length) await page.setViewportSize({width:390,height:844});
+      const frame = await page.evaluate(view => window.renderParkFrame(view), view);
+      const pixels = await page.evaluate(async data => {
+        const im=new Image();im.src=data;await im.decode();
+        const thumb=document.createElement('canvas');thumb.width=128;thumb.height=96;
+        const ctx=thumb.getContext('2d');ctx.drawImage(im,0,0,128,96);
+        const values=ctx.getImageData(0,0,128,96).data,bins=new Set();
+        let visible=0,clipped=0;
+        for(let i=0;i<values.length;i+=4){
+          const [r,g,b]=[values[i],values[i+1],values[i+2]];
+          if(Math.max(r,g,b)>23)visible++;
+          if(Math.min(r,g,b)>247)clipped++;
+          bins.add((r>>4)*256+(g>>4)*16+(b>>4));
+        }
+        const size=values.length/4;
+        return {bins:bins.size,visible:visible/size,clipped:clipped/size,width:im.width,height:im.height};
+      },frame.image);
+      assert.ok(frame.calls>0 && frame.triangles>1000 && pixels.bins>40 && pixels.visible>.32 && pixels.clipped<.42, view[0]+' has no usable exposure: '+JSON.stringify(pixels));
+      if(index===views.length) assert.ok(pixels.height>pixels.width);
+      console.log(view[0]+': '+frame.calls+' draws, '+frame.triangles+' triangles across all passes, '+pixels.bins+' color bins, '+(pixels.clipped*100).toFixed(2)+'% clipped');
+      fs.writeFileSync(path.join(out, view[0]+'.jpg'),Buffer.from(frame.image.split(',')[1],'base64'));
+      if(index<views.length) shots.push(frame.image);
     }
     assert.deepEqual(errors, []);
     const board = await page.evaluate(async shots => {
@@ -76,7 +96,7 @@ async function run() {
     fs.writeFileSync(path.join(out, 'overview.webp'), Buffer.from(board.split(',')[1], 'base64'));
     // A portable preview is also readable when artifact downloads require a signed-in browser.
     console.log('PARK_PREVIEW ' + board);
-    console.log('Rendered ' + views.length + ' fixed park views across all three quality and lighting settings.');
+    console.log('Rendered eight fixed park views and a portrait frame across all three quality and lighting settings.');
   } finally { await browser.close(); }
 }
 run().catch(err => { console.error(err); process.exitCode = 1; });

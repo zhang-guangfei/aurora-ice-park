@@ -34,6 +34,7 @@ function ground(T, renderer, scene, camera, kit) {
     }
   }
   const lighting = {
+    texture: irradiance,
     pool: (x, z, rx, rz, angle, color, strength) => stampLight(x, z, rx, rz, angle, color, strength),
     contact: (x, z, rx, rz, strength, angle = 0) => stampLight(x, z, rx, rz, angle, null, strength),
   };
@@ -51,7 +52,7 @@ function ground(T, renderer, scene, camera, kit) {
   map.needsUpdate = true;
   const gm = kit.snow.clone();
   gm.map = map;
-  gm.normalMap = kit.normal.clone();
+  gm.normalMap = (kit.snowNormal || kit.normal).clone();
   gm.normalMap.repeat.set(80, 80);
   gm.normalMap.needsUpdate = true;
   gm.vertexColors = true;
@@ -123,6 +124,32 @@ function ground(T, renderer, scene, camera, kit) {
   tex.wrapS = tex.wrapT = T.RepeatWrapping;
   tex.colorSpace = T.SRGBColorSpace;
   tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  // Blade scratches cross in paired arcs. The texture tiles at all four boundaries.
+  const wearCanvas=document.createElement('canvas');
+  wearCanvas.width=wearCanvas.height=512;
+  const ink=wearCanvas.getContext('2d');
+  ink.fillStyle='#000';ink.fillRect(0,0,512,512);
+  ink.globalCompositeOperation='lighter';ink.lineCap='round';
+  for(let mark=0;mark<54;mark++){
+    const x=rnd()*512,z=rnd()*512,angle=rnd()*Math.PI*2;
+    const length=36+122*rnd(),curl=(rnd()-.5)*length, gap=3.5+rnd()*3;
+    for(const offset of [0,gap]){
+      const path=new Path2D();path.moveTo(0,offset);
+      path.bezierCurveTo(length*.28,offset+curl*.08,length*.65,offset+curl*.76,length,offset+curl);
+      ink.lineWidth=.60+.55*rnd();ink.strokeStyle='rgba(224,0,0,'+(.18+.54*rnd())+')';
+      for(const ox of [-512,0,512])for(const oz of [-512,0,512]){
+        ink.setTransform(Math.cos(angle),Math.sin(angle),-Math.sin(angle),Math.cos(angle),x+ox,z+oz);ink.stroke(path);
+      }
+    }
+  }
+  ink.resetTransform();
+  for(let j=0;j<280;j++){
+    const x=rnd()*512,z=rnd()*512;ink.fillStyle='rgba(0,255,0,'+(.18+.58*rnd())+')';
+    ink.beginPath();ink.ellipse(x,z,.48+rnd()*1.1,.52+rnd()*1.25,0,0,Math.PI*2);ink.fill();
+  }
+  const wear=new T.CanvasTexture(wearCanvas);
+  wear.wrapS=wear.wrapT=T.RepeatWrapping;
+  wear.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
   const rt = new T.WebGLRenderTarget(640, 360, {
     type: T.UnsignedByteType,
     minFilter: T.LinearFilter,
@@ -165,6 +192,8 @@ function ground(T, renderer, scene, camera, kit) {
       s.uniforms.rMat = { value: matrix };
       s.uniforms.rEnabled = enable;
       s.uniforms.rGloss = { value: gloss };
+      s.uniforms.iceWear = { value: wear };
+      s.uniforms.wearAmount = { value: pattern ? .44 : 1 };
       s.vertexShader =
         'varying vec4 projIce;varying vec3 worldIce;uniform mat4 rMat;\n' +
         s.vertexShader.replace(
@@ -174,8 +203,8 @@ function ground(T, renderer, scene, camera, kit) {
       s.fragmentShader =
         `varying vec4 projIce;
 varying vec3 worldIce;
-uniform sampler2D rTex;
-uniform float rEnabled, rGloss;
+uniform sampler2D rTex, iceWear;
+uniform float rEnabled, rGloss, wearAmount;
 #ifdef ICE_DEPTH_REPROJECTION
 uniform sampler2D rDepth;
 uniform vec4 rEyeInCapture;
@@ -203,18 +232,21 @@ vec2 reflectionUV() {
 ` +
         s.fragmentShader.replace(
           '#include <opaque_fragment>',
-          `if (rEnabled>.5 && projIce.w>.001) {
+          `vec2 cuts=texture2D(iceWear,worldIce.xz*.115).rg;
+ float wearDetail=wearAmount*(1.-smoothstep(11.,38.,length(worldIce-cameraPosition)));
+ if (rEnabled>.5 && projIce.w>.001) {
  vec2 reflUV=reflectionUV();
  float frost=.5+.5*sin(worldIce.x*.65+sin(worldIce.z*.42)*2.7)*cos(worldIce.z*.31+worldIce.x*.34);
  vec2 grains=vec2(sin(worldIce.x*4.7+worldIce.z*.81),cos(worldIce.z*3.6+worldIce.x*.59))*(.00016+.00053*frost);
  float grazing=1.-clamp(normalize(cameraPosition-worldIce).y,0.,1.);
- vec2 uv=clamp(reflUV+grains,vec2(.003),vec2(.997)), spread=vec2(.00072,.00175)*(.6+frost);
+ vec2 uv=clamp(reflUV+grains,vec2(.003),vec2(.997)), spread=vec2(.00072,.00175)*(.6+frost+cuts.r*wearDetail);
  vec3 refl=.44*texture2D(rTex,uv).rgb+.18*(texture2D(rTex,uv+spread).rgb+texture2D(rTex,uv-spread).rgb)
           +.10*(texture2D(rTex,uv+vec2(spread.x,-spread.y)).rgb+texture2D(rTex,uv+vec2(-spread.x,spread.y)).rgb);
  vec2 border=min(reflUV,1.0-reflUV);
  float inside=smoothstep(0.0,0.012,min(border.x,border.y));
  outgoingLight=mix(outgoingLight,refl*vec3(.84,.95,1.05)+diffuseColor.rgb*.023,inside*rGloss*(.27+.65*grazing)*(1.-.28*frost));
  }
+ outgoingLight+=cuts.r*wearDetail*vec3(.15,.22,.25)+cuts.g*wearDetail*vec3(.07,.12,.14);
  #include <opaque_fragment>`
         );
       groundLight(s, 'worldIce', '.48');

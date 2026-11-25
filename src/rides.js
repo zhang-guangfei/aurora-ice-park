@@ -295,7 +295,25 @@ function buildRides(T, k, lighting) {
     g.computeVertexNormals();
     m(group, g, mat, V(0, 0, 0));
   }
-  ribbon(prof, I, false);
+  const bed=k.ice(0x68c6dd,{roughness:.145,thickness:1.08,transmission:.36});
+  if(bed.isMeshPhysicalMaterial){
+    const coat=bed.onBeforeCompile, originalKey=bed.customProgramCacheKey();
+    bed.onBeforeCompile=(shader,renderer)=>{
+      coat(shader,renderer);
+      shader.vertexShader='varying vec2 chuteCoords;\n'+shader.vertexShader.replace('#include <project_vertex>','#include <project_vertex>\nchuteCoords=uv;');
+      shader.fragmentShader='varying vec2 chuteCoords;\n'+shader.fragmentShader.replace('#include <opaque_fragment>',`
+        float alongRun=clamp(chuteCoords.y/21.7,0.,1.), bank=abs(chuteCoords.x*2.-1.);
+        vec3 lamp=mix(vec3(.013,.36,.72),vec3(.29,.066,.64),smoothstep(.05,.57,alongRun));
+        lamp=mix(lamp,vec3(.76,.17,.08),smoothstep(.55,.97,alongRun));
+        float strake=exp(-abs(bank-.81)*21.)+.36*exp(-abs(bank-.54)*39.);
+        float flow=.80+.20*cos(chuteCoords.y*1.02-uClock*.66);
+        outgoingLight*=1.-.17*(1.-bank);
+        outgoingLight+=lamp*(.066+.21*bank*bank+.45*strake)*flow*(.22+.78*uNight);
+        #include <opaque_fragment>`);
+    };
+    bed.customProgramCacheKey=()=>originalKey+'-lit-chute';
+  }
+  ribbon(prof, bed, false);
   ribbon(
     [
       [-1, 0.98],
@@ -426,6 +444,31 @@ function buildRides(T, k, lighting) {
     for (const z of [front - 0.52, back + 0.52]) {
       rod(slideStructure, V(left + 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
       rod(slideStructure, V(right - 0.64, h, z), V(mx, h + 5.73, z), 0.13, K);
+    }
+  }
+  // Two open arcades clad the tower's western bay. The deck opening and the stair flight stay clear.
+  function pavilionPanel(width,height) {
+    const w=width*.5,h=height,r=width*.34,spring=height*.52;
+    const wall=new T.Shape();
+    wall.moveTo(-w,0);wall.lineTo(-w,h);wall.lineTo(w,h);wall.lineTo(w,0);wall.lineTo(-w,0);
+    const opening=new T.Path();opening.moveTo(-r,.39);opening.lineTo(r,.39);opening.lineTo(r,spring);
+    opening.quadraticCurveTo(r,spring+height*.18,0,h-.46);
+    opening.quadraticCurveTo(-r,spring+height*.18,-r,spring);opening.lineTo(-r,.39);
+    wall.holes.push(opening);
+    return new T.ExtrudeGeometry(wall,{depth:.29,bevelEnabled:true,bevelThickness:.052,bevelSize:.064,bevelSegments:1,curveSegments:12});
+  }
+  const westX=left+.66,bayX=westX+2.36,bayZ=(front+back)/2;
+  const frontPanel=pavilionPanel(4.6,5.25), sidePanel=pavilionPanel(4.05,5.25);
+  for(const baseY of [6.14,12.03]){
+    m(slideStructure,frontPanel,baseY<10?B:I,V(bayX,baseY,front-.70));
+    const wing=m(slideStructure,sidePanel,baseY<10?I:P,V(westX+.08,baseY,bayZ));
+    wing.rotation.y=-Math.PI/2;
+    box(slideStructure,V(bayX,baseY+5.24,front-.52),4.80,.20,.54,I);
+    box(slideStructure,V(westX-.03,baseY+5.24,bayZ),.48,.19,4.28,B);
+    for(const s of [-1,1]){
+      const a=V(bayX+s*1.64,baseY+.65,front-.35),b=V(a.x,baseY+2.7,a.z),
+        c=V(bayX+s*.99,baseY+4.05,a.z),d=V(bayX,baseY+4.77,a.z);
+      tube(slideStructure,[a,b,c,d],.067,baseY<10?C:L,15);
     }
   }
   const arch = [
