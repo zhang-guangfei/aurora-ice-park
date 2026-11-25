@@ -70,7 +70,10 @@ async function verifyPark() {
     console.log('The live WebGL scene rendered at Central Plaza (' + colors.size + ' color bins)');
 
     await page.locator('#mapBtn').click();
-    assert.equal(await page.locator('[data-place]').count(), 7);
+    const stops = await page.locator('[data-place] span').allTextContents();
+    for (const label of ['中心广场', '冰雪城堡', '雪花摩天轮', '超级冰滑梯', '冰雕艺廊', '冰雪商业街', '冰上游乐场', '雪仗靶场']) {
+      assert.ok(stops.includes(label), 'Missing map destination: ' + label);
+    }
     await page.locator('[data-place]').filter({ hasText: '雪花摩天轮' }).click();
     await page.locator('#travelBtn').click();
     await page.locator('#interactBtn').click();
