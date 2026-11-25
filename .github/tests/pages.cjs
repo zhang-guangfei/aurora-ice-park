@@ -78,9 +78,36 @@ async function verifyPark() {
     await page.locator('#travelBtn').click();
     await page.locator('#interactBtn').click();
     await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '摩天轮观景');
+    assert.equal(await page.locator('#viewBtn span').textContent(), '窗边广角');
+    await page.locator('#viewBtn').click();
+    assert.equal(await page.locator('#viewBtn span').textContent(), '舱外全景');
+    await page.mouse.move(430, 250);
+    await page.mouse.down();
+    await page.mouse.move(495, 260, { steps: 3 });
+    await page.mouse.up();
+    await page.locator('#photoBtn').click();
+    await page.locator('#exitPhoto').waitFor({ state: 'visible' });
+    await page.locator('#exitPhoto').click();
+    assert.ok(await page.locator('#game.wheel-ride').count());
+    assert.equal(await page.locator('#modeLabel').textContent(), '摩天轮观景');
+    await page.keyboard.press('v');
+    assert.equal(await page.locator('#viewBtn span').textContent(), '窗边广角');
     await page.keyboard.press('e');
     await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '自由探索');
-    console.log('The park map opened. Fast travel, boarding and exiting the Ferris wheel passed.');
+    assert.equal(await page.locator('#game.wheel-ride').count(), 0);
+    console.log('Live wheel: boarded, looked around, switched both viewpoints, took camera control and returned to the platform.');
+
+    await page.locator('#mapBtn').click();
+    await page.locator('[data-place]').filter({ hasText: '超级冰滑梯' }).click();
+    await page.locator('#travelBtn').click();
+    assert.equal(await page.locator('#actionName').textContent(), '登上滑梯高台');
+    await page.locator('#interactBtn').click();
+    assert.equal(await page.locator('#actionName').textContent(), '开始冰道滑行');
+    await page.keyboard.press('e');
+    await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '冰道滑行');
+    await page.keyboard.press('e');
+    await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '自由探索');
+    console.log('Live slide: reached the platform and rode the new chute.');
 
     await page.locator('#mapBtn').click();
     await page.locator('[data-place]').filter({ hasText: '中心广场' }).click();
@@ -100,6 +127,20 @@ async function verifyPark() {
     await page.locator('#mapBtn').click();
     await page.locator('[data-place]').filter({ hasText: '中心广场' }).click();
     await page.locator('#travelBtn').click();
+    assert.equal(await page.locator('#skatesBtn span').textContent(), '领冰鞋');
+    await page.keyboard.press('r');
+    assert.equal(await page.locator('[data-place].active span').textContent(), '冰上游乐场');
+    assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
+    await page.locator('#travelBtn').click();
+    assert.equal(await page.locator('#actionName').textContent(), '领取冰鞋');
+    assert.equal(await page.evaluate(() => !!JSON.parse(localStorage.getItem('frostbound.park.v1')).ownsSkates), false);
+    await page.keyboard.press('e');
+    assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'true');
+    assert.ok(await page.evaluate(() => JSON.parse(localStorage.getItem('frostbound.park.v1')).ownsSkates));
+    await page.locator('#skatesBtn').click();
+    await page.locator('#mapBtn').click();
+    await page.locator('[data-place]').filter({ hasText: '中心广场' }).click();
+    await page.locator('#travelBtn').click();
     await page.keyboard.press('r');
     await page.waitForFunction(() => document.querySelector('#skatesBtn').getAttribute('aria-pressed') === 'true'
       && document.querySelector('#modeLabel').textContent === '冰上漫游');
@@ -113,20 +154,31 @@ async function verifyPark() {
     }
     await page.locator('#skatesBtn').click();
     assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
-    console.log('Live park: equipped at the plaza, skated off the avenue, walked on snow, glided back on ice and unequipped.');
+    console.log('Live skates: no remote grant, claimed at the west gate, equipped at the plaza, walked on snow and glided on ice.');
     assert.deepEqual(errors, []);
     console.log('Walked along the ice avenue in medium quality with planar reflections enabled.');
 
     await page.close();
     const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    phone.setDefaultTimeout(90000);
     await phone.addInitScript(() => localStorage.setItem('frostbound.park.v1', JSON.stringify({ quality: 'low' })));
     await phone.goto(site.href, { waitUntil: 'domcontentloaded' });
     await phone.waitForFunction(() => document.querySelector('#loading')?.hidden === true, null, { timeout: 90000 });
     await phone.locator('#skatesBtn').tap();
+    assert.equal(await phone.locator('[data-place].active span').textContent(), '冰上游乐场');
+    await phone.locator('#travelBtn').tap();
+    assert.equal(await phone.locator('#actionName').textContent(), '领取冰鞋');
+    assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
+    await phone.locator('#interactBtn').tap();
     assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'true');
+    await phone.locator('#mapBtn').tap();
+    await phone.locator('[data-place]').filter({ hasText: '中心广场' }).tap();
+    await phone.locator('#travelBtn').tap();
     await phone.locator('#skatesBtn').tap();
     assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
-    console.log('Touch HUD: tapped to put skates on and take them off on a 390px viewport.');
+    await phone.locator('#skatesBtn').tap();
+    assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'true');
+    console.log('Touch HUD: found the rink, claimed skates at the rack and changed footwear away from the rink on a 390px screen.');
   } finally {
     await browser.close();
   }
