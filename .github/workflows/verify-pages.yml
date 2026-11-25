@@ -9,6 +9,12 @@ on:
       - '.github/tests/ice-reflection.cjs'
       - '.github/tests/skates.cjs'
       - '.github/tests/ride-clearance.cjs'
+      - '.github/tests/park-frames.cjs'
+      - 'src/materials.js'
+      - 'src/atmosphere.js'
+      - 'src/castle.js'
+      - 'src/landscape.js'
+      - 'src/sculptures.js'
       - 'src/rides.js'
       - 'src/navigation.js'
       - 'src/visitors.js'
@@ -51,3 +57,24 @@ jobs:
         env:
           RELEASE_REF: ${{ github.event.workflow_run.head_sha || 'origin/gh-pages' }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/pages.cjs
+
+  frames:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 7
+    steps:
+      - uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: Install browser test tools
+        run: npm install --prefix "$RUNNER_TEMP/park-check" --no-audit --no-fund --ignore-scripts --no-package-lock playwright-core@1.58.2
+      - name: Render fixed park viewpoints
+        env:
+          SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/park-frames.cjs
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: park-views
+          path: ${{ runner.temp }}/park-frames
+          retention-days: 7
