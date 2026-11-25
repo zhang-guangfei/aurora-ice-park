@@ -67,12 +67,18 @@ function visitors(T, kit) {
     shape(rig, scarf, 0, 1.39, -0.008, 0.132, 0.05, 0.12);
     shape(rig, scarf, 0.074, 1.28, -0.117, 0.038, 0.117, 0.018);
     if (bag) shape(rig, 0x4e6170, 0, 1.072, 0.158, 0.132, 0.147, 0.074);
+    const withoutBlades = parts.length;
+    for (const leg of legs) {
+      for (const z of [-0.13, 0.045]) shape(leg, 0x708b97, 0, -0.793, z, 0.022, 0.033, 0.026);
+      shape(leg, 0xcde0e7, 0, -0.83, -0.045, 0.015, 0.018, 0.167);
+    }
     const body = new T.InstancedMesh(S, P, parts.length),
       tmp = new T.Matrix4();
     body.frustumCulled = false;
     parts.forEach((p, i) => body.setColorAt(i, new T.Color(p[2])));
     model.add(body);
-    function pose(t, speed, ground = true, skate = false, sliding = false) {
+    function pose(t, speed, ground = true, skate = false, sliding = false, wearingSkates = skate) {
+      body.count = wearingSkates ? parts.length : withoutBlades;
       const a = Math.min(1.35, speed / 2),
         w = Math.sin(t);
       for (let i = 0; i < 2; i++) {
@@ -87,6 +93,7 @@ function visitors(T, kit) {
         arms[i].rotation.z = s * (skate ? 0.39 : 0.04);
       }
       rig.position.y = sliding ? -0.44 : ground ? Math.abs(Math.cos(t)) * 0.013 * a : 0;
+      if (wearingSkates) rig.position.y += 0.04;
       rig.updateMatrixWorld(true);
       parts.forEach(([j, m], i) => body.setMatrixAt(i, tmp.multiplyMatrices(j.matrixWorld, m)));
       body.instanceMatrix.needsUpdate = true;
@@ -109,22 +116,18 @@ function visitors(T, kit) {
   let prev;
   for (let i = 0; i <= 24; i++) {
     const th = Math.PI + 0.36 + ((tau - 0.72) * i) / 24,
-      x = 43 + 15 * Math.cos(th),
-      z = 70 + 10 * Math.sin(th),
+      x = skatingRink.x + skatingRink.rx * Math.cos(th),
+      z = skatingRink.z + skatingRink.rz * Math.sin(th),
       p = V(x, 0.82, z);
     rail(V(x, 0.04, z), V(x, 0.94, z), 0.069, 0x45606b);
     fixed(group, S, 0xdce6eb, x, 0.956, z, 0.09, 0.037, 0.09);
     if (prev) {
       rail(prev, p, 0.055, 0x756168);
       rail(V(prev.x, 0.34, prev.z), V(x, 0.34, z), 0.035, 0x526474);
+      const dx = x - prev.x, dz = z - prev.z;
       colliders.push({
-        type: 'obb',
-        x: (x + prev.x) / 2,
-        z: (z + prev.z) / 2,
-        w: 0.18,
-        d: Math.hypot(x - prev.x, z - prev.z),
-        rotation: Math.atan2(x - prev.x, z - prev.z),
-        maxY: 0.94,
+        type: 'rinkRail', x: (x + prev.x) / 2, z: (z + prev.z) / 2,
+        dx, dz, invLengthSq: 1 / (dx * dx + dz * dz), r: 0.09, maxY: 0.94,
       });
     }
     prev = p;
@@ -187,7 +190,7 @@ function visitors(T, kit) {
     update(t, dt, p) {
       const speed = p.speed || 0;
       phase += dt * (2.8 + Math.min(7, speed) * 1.3) * Math.min(1, speed * 2);
-      hero.pose(phase, speed, p.grounded, p.skating, p.sliding);
+      hero.pose(phase, speed, p.grounded, p.skating, p.sliding, p.skatesOn);
       guests.forEach((a, i) => {
         const skating = i > 2,
           k = t * (skating ? 0.28 : 0.08) + i * 1.8,

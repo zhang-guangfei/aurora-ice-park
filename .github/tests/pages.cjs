@@ -97,6 +97,14 @@ async function verifyPark() {
     } finally {
       await page.keyboard.up('w');
     }
+    if (process.env.EXPECT_SKATES === 'true') {
+      await page.keyboard.press('r');
+      await page.waitForFunction(() => document.querySelector('#skatesBtn')?.getAttribute('aria-pressed') === 'true'
+        && document.querySelector('#modeLabel').textContent === '冰上漫游');
+      await page.locator('#skatesBtn').click();
+      assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
+      console.log('The public site accepted both keyboard and HUD skate controls outside the rink.');
+    }
     assert.deepEqual(errors, []);
     console.log('Walked along the ice avenue in medium quality with planar reflections enabled.');
   } finally {

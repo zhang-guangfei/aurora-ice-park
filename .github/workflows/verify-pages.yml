@@ -7,6 +7,9 @@ on:
       - '.github/workflows/verify-pages.yml'
       - '.github/tests/pages.cjs'
       - '.github/tests/ice-reflection.cjs'
+      - '.github/tests/skates.cjs'
+      - 'src/navigation.js'
+      - 'src/visitors.js'
       - 'src/terrain.js'
       - 'src/game.js'
   workflow_run:
@@ -34,7 +37,12 @@ jobs:
         env:
           SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/ice-reflection.cjs
+      - name: Check skating, snow grip and rink collisions
+        env:
+          SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/skates.cjs
       - name: Check the published game in Chrome
         env:
           RELEASE_REF: ${{ github.event.workflow_run.head_sha || 'origin/gh-pages' }}
+          EXPECT_SKATES: ${{ github.event_name == 'workflow_run' }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/pages.cjs

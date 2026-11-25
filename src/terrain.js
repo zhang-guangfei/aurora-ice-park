@@ -185,6 +185,35 @@ vec2 reflectionUV() {
     g.computeVertexNormals();
     return g;
   }
+  // Index the same triangles that draw the ice. Curved paths, the plaza and the rink share these edges.
+  const iceCells = new Map();
+  const cellSize = 8;
+  function registerIce(geometry) {
+    const p = geometry.attributes.position, indices = geometry.index.array;
+    for (let i = 0; i < indices.length; i += 3) {
+      const a = indices[i], b = indices[i + 1], c = indices[i + 2];
+      const x = p.getX(a), z = p.getZ(a), bx = p.getX(b), bz = p.getZ(b), cx = p.getX(c), cz = p.getZ(c);
+      const det = (bx - x) * (cz - z) - (bz - z) * (cx - x);
+      if (Math.abs(det) < 1e-9) continue;
+      const tri = { x, z, ux: (cz - z) / det, uz: (x - cx) / det, vx: (z - bz) / det, vz: (bx - x) / det };
+      for (let gx = Math.floor(Math.min(x, bx, cx) / cellSize); gx <= Math.floor(Math.max(x, bx, cx) / cellSize); gx++) {
+        for (let gz = Math.floor(Math.min(z, bz, cz) / cellSize); gz <= Math.floor(Math.max(z, bz, cz) / cellSize); gz++) {
+          const key = gx + ',' + gz;
+          if (!iceCells.has(key)) iceCells.set(key, []);
+          iceCells.get(key).push(tri);
+        }
+      }
+    }
+  }
+  function isIce(x, z) {
+    const cell = iceCells.get(Math.floor(x / cellSize) + ',' + Math.floor(z / cellSize));
+    if (!cell) return false;
+    for (const t of cell) {
+      const dx = x - t.x, dz = z - t.z, u = dx * t.ux + dz * t.uz, v = dx * t.vx + dz * t.vz;
+      if (u >= -1e-7 && v >= -1e-7 && u + v <= 1.0000001) return true;
+    }
+    return false;
+  }
   function strip(points, width, mat, y = 0.052) {
     const ps = [],
       uvs = [],
@@ -208,6 +237,7 @@ vec2 reflectionUV() {
       }
     }
     const o = new T.Mesh(geometry(ps, idx, uvs), mat);
+    if (mat === road || mat === side) registerIce(o.geometry);
     o.receiveShadow = true;
     surfaces.add(o);
     return o;
@@ -307,6 +337,7 @@ vec2 reflectionUV() {
       g.attributes.uv.setXY(i, xx / 8, zz / 8);
     }
     const o = new T.Mesh(g, m);
+    registerIce(g);
     o.receiveShadow = true;
     surfaces.add(o);
     return o;
@@ -388,6 +419,7 @@ vec2 reflectionUV() {
   return {
     road,
     rt,
+    isIce,
     resize(w, h, level) {
       enable.value = level === 'low' ? 0 : 1;
       captureInterval = level === 'high' ? 0.082 : 0.17;

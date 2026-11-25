@@ -67,6 +67,7 @@ function play(T) {
           quality,
           time: timeMode,
           third,
+          skatesOn: player.skatesOn,
           volume: audio.volume,
         })
       );
@@ -124,10 +125,13 @@ function play(T) {
     { type: 'box', x: -52.18, z: -13.35, w: 6.94, d: 1.42, minY: 17.84, maxY: 18.6 },
     { type: 'box', x: -43.83, z: -13.35, w: 0.86, d: 1.42, minY: 17.84, maxY: 18.6 }
   );
+  const railColliders = colliders.filter(c => c.type === 'rinkRail');
+  const otherColliders = colliders.filter(c => c.type !== 'rinkRail');
+  const bodyRadius = 0.34, bodyHeight = 1.63;
   const fx = effects(T, scene, kit);
   scene.add(people.avatar);
   const places = guidebook(rides);
-  const player = { pos: V(0, 0.09, 70), yaw: 0, pitch: 0.164, speed: 0, grounded: true, skating: false },
+  const player = { pos: V(0, 0.09, 70), yaw: 0, pitch: 0.164, speed: 0, grounded: true, skating: false, skatesOn: saved.skatesOn === true },
     velocity = V(),
     photoPos = V(),
     lookDir = V(),
@@ -212,7 +216,7 @@ function play(T) {
       skate: '冰上漫游',
       snow: '雪球挑战',
     };
-  const can = (x, z, y = player.pos.y, r = 0.34, h = 1.63) => canOccupy(x, z, y, r, h, colliders);
+  const can = (x, z, y = player.pos.y, r = bodyRadius, h = bodyHeight) => canOccupy(x, z, y, r, h, colliders);
   function toast(s) {
     $('toast').textContent = s;
     $('toast').classList.add('on');
@@ -269,6 +273,30 @@ function play(T) {
     save();
     toast('画质已切换为' + { high: '高', medium: '中', low: '低' }[v] + '档');
   }
+  function canGlide(ice) {
+    return mode === 'walk' && player.skatesOn && player.grounded && player.pos.y < 0.22 && ice;
+  }
+  function activity() {
+    return mode === 'walk' && player.skating ? 'skate' : mode;
+  }
+  function activityLabel() {
+    return activity() === 'walk' && player.skatesOn ? '穿冰鞋步行' : localeMode[activity()];
+  }
+  function syncSkatesButton() {
+    const button = $('skatesBtn');
+    button.setAttribute('aria-pressed', String(player.skatesOn));
+    button.title = player.skatesOn ? '脱下冰鞋 (R)' : '穿上冰鞋 (R)';
+    button.setAttribute('aria-label', button.title);
+  }
+  function toggleSkates() {
+    player.skatesOn = !player.skatesOn;
+    player.skating = canGlide(terrain.isIce(player.pos.x, player.pos.z));
+    if (!player.skatesOn && mode === 'walk') velocity.set(0, 0, 0);
+    syncSkatesButton();
+    save();
+    detect();
+    toast(player.skatesOn ? '已穿冰鞋 · 冰面滑行，雪地步行' : '已脱下冰鞋');
+  }
   function stats() {
     const pc = Math.round((visited.size / 7) * 100);
     $('explored').textContent = pc + '%';
@@ -295,6 +323,7 @@ function play(T) {
     velocity.set(0, 0, 0);
     vy = 0;
     player.grounded = true;
+    player.skating = canGlide(terrain.isIce(x, z));
     stepDistance = 0;
     syncCamera(true);
   }
@@ -315,7 +344,7 @@ function play(T) {
       balls.length = 0;
     }
     velocity.set(0, 0, 0);
-    $('modeLabel').textContent = localeMode[mode];
+    $('modeLabel').textContent = activityLabel();
     $('banner').hidden = true;
   }
   function travel(i) {
@@ -343,7 +372,7 @@ function play(T) {
     else if (z < -26 && Math.abs(x) < 38) id = 'castle';
     else if (x < -29 && z >= 21 && z < 54) id = 'art';
     else if (x > 29 && z >= 16 && z < 57) id = 'town';
-    else if ((Math.abs(x) > 27 && z > 56) || mode === 'skate' || mode === 'snow') id = 'ice';
+    else if ((Math.abs(x) > 27 && z > 56) || mode === 'snow') id = 'ice';
     region = id;
     const dest = places.find((p) => p.id === id);
     $('regionLabel').textContent = id === 'ice' && x < 0 ? '雪仗靶场' : dest.n;
@@ -406,7 +435,7 @@ function play(T) {
       people.avatar.visible = last > 0.24;
     } else {
       camera.position.copy(eye);
-      if (player.grounded && mode === 'walk' && player.speed > 0.4)
+      if (player.grounded && mode === 'walk' && !player.skating && player.speed > 0.4)
         camera.position.y += Math.sin(tourTime * 2) * 0.02 * Math.min(1, player.speed / 3);
       camera.lookAt(camera.position.clone().add(dir));
     }
@@ -517,7 +546,6 @@ function play(T) {
         }
       }
       if (nearest) set('拾取冰晶', () => collect(nearest.i));
-      else if (mode === 'skate') set('脱下冰鞋', () => leaveMode());
       else if (mode === 'snow') set('结束雪仗', () => leaveMode());
       else if (dist(rides.slideEntry.x, rides.slideEntry.z) < 6.9 && player.pos.y > 16)
         set('开始冰道滑行', () => {
@@ -555,14 +583,8 @@ function play(T) {
           face(0, 10, 0.1);
           toast('已登乘 · 拖动可环顾园区');
         });
-      else if (Math.pow((player.pos.x - 43) / 16.4, 2) + Math.pow((player.pos.z - 70) / 11.4, 2) < 1.18)
-        set('穿上冰鞋', () => {
-          mode = 'skate';
-          player.skating = true;
-          if (player.pos.x < 29.1) relocate(29.4, 0.09, 70);
-          audio.fx('ride');
-          toast('冰鞋已穿好 · 松开方向键可滑行');
-        });
+      else if (Math.hypot(player.pos.x - (skatingRink.x - skatingRink.rx), player.pos.z - skatingRink.z) < 3.5)
+        set(player.skatesOn ? '脱下冰鞋' : '穿上冰鞋', toggleSkates);
       else if (dist(-39, 70) < 10.5)
         set('开始雪仗', () => {
           mode = 'snow';
@@ -604,16 +626,16 @@ function play(T) {
     near = action;
     $('prompt').hidden = !action;
     if (action) $('actionName').textContent = action.name;
-    $('modeLabel').textContent = localeMode[mode];
-    $('banner').hidden = mode === 'walk';
-    if (mode !== 'walk')
+    $('modeLabel').textContent = activityLabel();
+    $('banner').hidden = activity() === 'walk';
+    if (activity() !== 'walk')
       $('banner').textContent =
         mode === 'wheel'
           ? '座舱高度 ' + Math.max(0, Math.round(rides.wheelSeat(seat).y)) + ' m'
           : mode === 'slide'
           ? '滑行速度 ' + Math.round(slideSpeed * 3.6) + ' km/h'
-          : mode === 'skate'
-          ? '滑冰中 · 转向时保留滑行惯性'
+          : player.skating
+          ? '冰面滑行 · R 穿脱冰鞋'
           : '雪球命中 ' + shotHits.size + ' / 3 · 点击或 F 投掷';
   }
   function interact() {
@@ -622,65 +644,6 @@ function play(T) {
     near?.fn();
     detect();
     updateArea();
-  }
-  function onSnow(x, z) {
-    if (
-      (Math.abs(x) < 9.5 && z > -34) ||
-      ((x + 1) / 20) ** 2 + ((z - 10) / 14) ** 2 < 1 ||
-      ((x - 43) / 15.2) ** 2 + ((z - 70) / 10.2) ** 2 < 1
-    )
-      return false;
-    const paths = [
-      [
-        [0, 57],
-        [-16, 52],
-        [-29, 43],
-        [-40, 34],
-        [-46, 18],
-      ],
-      [
-        [0, 54],
-        [16, 50],
-        [25, 43],
-        [30, 31],
-        [41, 13],
-        [51, -14],
-      ],
-      [
-        [0, 80],
-        [-18, 78],
-        [-34, 70],
-        [-46, 70],
-      ],
-      [
-        [0, 80],
-        [16, 78],
-        [28, 70],
-        [39, 70],
-      ],
-      [
-        [0, -4],
-        [-20, -3],
-        [-37, 5],
-        [-43, 17],
-      ],
-      [
-        [0, -4],
-        [19, -7],
-        [37, -11],
-        [49, -13],
-      ],
-    ];
-    for (const path of paths)
-      for (let i = 1; i < path.length; i++) {
-        const [a, b] = path[i - 1],
-          [c, d] = path[i],
-          v = c - a,
-          w = d - b,
-          t = clamp(((x - a) * v + (z - b) * w) / (v * v + w * w), 0, 1);
-        if ((x - a - t * v) ** 2 + (z - b - t * w) ** 2 < 5.6) return false;
-      }
-    return true;
   }
   function physical(dt) {
     if (dialog || paused) return;
@@ -740,9 +703,11 @@ function play(T) {
       }
       return;
     }
-    const skate = mode === 'skate',
-      speed = skate ? (running ? 11.8 : 8.5) : running ? 8.2 : 4.15,
-      blend = 1 - Math.exp(-dt * (skate ? (l > 0.02 ? 2.1 : 0.52) : 15));
+    const skate = canGlide(terrain.isIce(player.pos.x, player.pos.z));
+    const walkSpeed = running ? 8.2 : 4.15;
+    const speed = skate ? (running ? 11.8 : 8.5) : walkSpeed;
+    const firmFooting = player.skatesOn && mode === 'walk' && player.grounded && !skate;
+    const blend = firmFooting ? 1 : 1 - Math.exp(-dt * (skate ? (l > 0.02 ? 2.1 : 0.52) : 15));
     velocity.x += (dx * speed - velocity.x) * blend;
     velocity.z += (dz * speed - velocity.z) * blend;
     function stepAxis(axis, amount) {
@@ -750,14 +715,10 @@ function play(T) {
       const old = player.pos[axis],
         x = axis === 'x' ? old + amount : player.pos.x,
         z = axis === 'z' ? old + amount : player.pos.z;
-      if (skate && ((x - 43) / 14.55) ** 2 + ((z - 70) / 9.57) ** 2 > 1) {
-        velocity[axis] *= -0.15;
-        return;
-      }
       const ht = rides.stairsGround(x, z);
       let testY = player.pos.y;
       if (player.grounded && ht !== null && ht <= testY + 0.34 && ht > testY) testY = ht;
-      if (can(x, z, testY)) {
+      if (canOccupy(x, z, testY, bodyRadius, bodyHeight, otherColliders)) {
         player.pos[axis] = old + amount;
       } else velocity[axis] = 0;
     }
@@ -765,8 +726,10 @@ function play(T) {
       oldZ = player.pos.z;
     stepAxis('x', velocity.x * dt);
     stepAxis('z', velocity.z * dt);
+    const railTop = resolveRinkRail(player.pos, velocity, oldX, oldZ, bodyRadius, railColliders);
     const raw = rides.stairsGround(player.pos.x, player.pos.z);
-    let floor = onSnow(player.pos.x, player.pos.z) ? -0.025 : 0.085;
+    const iceUnderfoot = terrain.isIce(player.pos.x, player.pos.z);
+    let floor = Math.max(iceUnderfoot ? 0.085 : -0.025, railTop);
     if (raw !== null && raw <= player.pos.y + 0.36) floor = Math.max(0.09, raw);
     if (player.grounded && floor < player.pos.y - 0.36) {
       player.grounded = false;
@@ -787,13 +750,19 @@ function play(T) {
       }
       player.pos.y = y;
     } else player.pos.y = floor;
+    player.skating = canGlide(iceUnderfoot);
+    if (skate && !player.skating && player.grounded) {
+      // Cut the coasting velocity on the same physics step the blades reach snow.
+      velocity.x = dx * walkSpeed;
+      velocity.z = dz * walkSpeed;
+    }
     player.speed = Math.hypot(player.pos.x - oldX, player.pos.z - oldZ) / dt;
     tourTime += dt * player.speed * 1.65;
     stepDistance += player.speed * dt;
     if (player.grounded && !skate && stepDistance > (running ? 1.36 : 0.95) && player.speed > 0.3) {
       stepDistance = 0;
       audio.fx('step');
-      if (player.pos.y < 0.24 && onSnow(player.pos.x, player.pos.z))
+      if (player.pos.y < 0.24 && !iceUnderfoot)
         fx.step(player.pos, player.yaw, globalTime);
     }
   }
@@ -871,6 +840,7 @@ function play(T) {
       ['Space', '跳跃'],
       ['E', '互动、收集或下车'],
       ['M', '地图与快速到达'],
+      ['R / 冰鞋按钮', '全园穿脱冰鞋，冰面滑行，雪地步行'],
       ['V', '切换第一／第三人称'],
       ['P', '进入或退出拍照'],
       ['F / 点击', '雪仗时投掷'],
@@ -1081,6 +1051,8 @@ function play(T) {
   $('helpBtn').onclick = help;
   $('interactBtn').onclick = interact;
   $('viewBtn').onclick = changeView;
+  $('skatesBtn').onclick = toggleSkates;
+  syncSkatesButton();
   $('photoBtn').onclick = startPhoto;
   $('exitPhoto').onclick = endPhoto;
   $('shutter').onclick = photograph;
@@ -1131,6 +1103,7 @@ function play(T) {
     if (code === 'Space') jump();
     if (code === 'KeyE') interact();
     if (code === 'KeyV') changeView();
+    if (code === 'KeyR') toggleSkates();
     if (code === 'KeyP') startPhoto();
     if (code === 'KeyM') openMap();
     if (code === 'KeyF') throwBall();
@@ -1312,7 +1285,7 @@ function play(T) {
         cr.g.rotation.y = t * 0.72 + cr.i * 0.67;
       }
     fx.update(t, dialog ? 0 : dt, specialEnd > t, timeMode === 'night', audio);
-    audio.update(mode, player.speed, specialEnd > t);
+    audio.update(activity(), player.speed, specialEnd > t);
     terrain.reflect(reflectionExclusions, stamp);
     post.render();
     frame++;
@@ -1367,7 +1340,7 @@ function play(T) {
 
 const mount = document.getElementById('park-mount');
 mount.innerHTML =
-  '<main id="game" aria-label="梦幻冰雪大世界"><canvas id="scene" tabindex="0" aria-label="3D 冰雪乐园，拖动环顾"></canvas><div class="shade"></div>\n<div id="hud"><header class="brand"><div class="brandmark"><svg viewBox="0 0 52 52" aria-hidden="true"><defs><g id="flake-arm"><path d="M26 5v15M20.5 10.5l5.5 4 5.5-4M22 16l4 3 4-3"/></g></defs><g fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><use href="#flake-arm" transform="rotate(0 26 26)"/><use href="#flake-arm" transform="rotate(60 26 26)"/><use href="#flake-arm" transform="rotate(120 26 26)"/><use href="#flake-arm" transform="rotate(180 26 26)"/><use href="#flake-arm" transform="rotate(240 26 26)"/><use href="#flake-arm" transform="rotate(300 26 26)"/><path d="m26 18 7 4v8l-7 4-7-4v-8z"/><path d="m26 22 3.5 2v4l-3.5 2-3.5-2v-4z" fill="currentColor" stroke="none"/></g></svg></div><div><h1>梦幻冰雪大世界</h1><small>HARBIN ICE &amp; SNOW WORLD</small></div></header>\n<div class="location glass"><i class="dot"></i><span id="modeLabel">自由探索</span><i class="divider"></i><svg data-i="pin"></svg><b id="regionLabel">中心广场</b></div>\n<div class="compass"><canvas id="compass"></canvas><i></i></div>\n<div class="tools glass"><button id="timeBtn" title="切换时段" aria-label="切换时段"><svg data-i="moon"></svg><span id="timeLabel">夜晚</span></button><i class="divider"></i><button id="audioBtn" title="开启声音" aria-label="开启声音"><svg data-i="muted"></svg></button><button id="settingsBtn" title="游戏设置" aria-label="游戏设置"><svg data-i="settings"></svg></button><button id="fullBtn" title="全屏" aria-label="全屏"><svg data-i="expand"></svg></button></div>\n<button id="mapBtn" class="mini glass" title="打开园区地图 (M)" aria-label="打开园区地图"><span class="drawing"><canvas id="mini"></canvas><b>N</b></span><span class="map-foot"><span><svg data-i="map"></svg>园区地图</span><kbd>M</kbd></span></button>\n<div id="way" hidden><i></i><span>冰雪城堡</span><small></small></div><b class="reticle"></b>\n<aside class="quest glass"><div class="qtop"><span><svg data-i="book"></svg>探索手记</span><b id="explored" title="已探索区域">14%</b></div><div class="qbody"><svg class="gem" viewBox="0 0 36 44" fill="none"><path d="m18 2 12 14-4 17-8 9-10-12-3-13z" fill="#67cdd3" fill-opacity=".21" stroke="#a4f8ef" stroke-width="1.3"/><path d="m18 2-4 16 4 24 5-25z" fill="#96f2ed" fill-opacity=".66"/><path d="m5 17 9 1 9-1 7-1M8 30l6-12M26 33l-3-16" stroke="#b5fffb" stroke-width=".9"/></svg><div class="qinfo"><div><strong>寻觅冰晶</strong><span><b id="count">0</b> / 7</span></div><div id="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><small id="goal">集齐冰晶，点亮极光盛典</small></div></div></aside>\n<div id="prompt"><button id="interactBtn" class="glass"><kbd>E</kbd><strong id="actionName">园区导览</strong><svg data-i="sign"></svg></button></div>\n<div class="actions"><button id="viewBtn" class="glass" title="切换视角 (V)"><svg data-i="user"></svg><span>视角</span><kbd>V</kbd></button><button id="photoBtn" class="glass" title="拍照模式 (P)"><svg data-i="camera"></svg><span>拍照</span><kbd>P</kbd></button></div>\n<footer><span class="move-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>移动</span><span class="item"><svg data-i="mouse"></svg>拖动环顾</span><span class="item"><kbd>Shift</kbd>奔跑</span><span class="item"><kbd>Space</kbd>跳跃</span><button id="helpBtn"><svg data-i="help"></svg>操作指南</button></footer></div>\n<div id="touch"><div id="joy"><i></i></div><div class="touchbuttons"><button id="run" aria-label="切换奔跑">跑</button><button id="jump" aria-label="跳跃">跳</button></div></div>\n<div id="photo" hidden><div class="photo-badge glass"><svg data-i="camera"></svg>拍照模式</div><i class="frame tl"></i><i class="frame tr"></i><i class="frame bl"></i><i class="frame br"></i><div class="photo-tools glass"><button id="lower" title="降低镜头">−</button><span>高度</span><button id="higher" title="升高镜头">＋</button><i class="divider"></i><button id="shutter"><svg data-i="camera"></svg>保存照片</button><button id="exitPhoto" aria-label="退出拍照"><svg data-i="close"></svg></button></div></div>\n<div id="banner" class="glass" hidden></div><div id="toast" role="status" aria-live="polite"></div>\n<div id="overlay" hidden><section id="dialog" class="glass" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><header><div><small id="kicker"></small><h2 id="dialogTitle"></h2></div><button id="closeDlg" aria-label="关闭"><svg data-i="close"></svg></button></header><div id="body"></div></section></div>\n<div id="loading"><div>❄</div><strong>梦幻冰雪大世界</strong><span>正在点亮冰雪乐园</span><i></i></div></main>';
+  '<main id="game" aria-label="梦幻冰雪大世界"><canvas id="scene" tabindex="0" aria-label="3D 冰雪乐园，拖动环顾"></canvas><div class="shade"></div>\n<div id="hud"><header class="brand"><div class="brandmark"><svg viewBox="0 0 52 52" aria-hidden="true"><defs><g id="flake-arm"><path d="M26 5v15M20.5 10.5l5.5 4 5.5-4M22 16l4 3 4-3"/></g></defs><g fill="none" stroke="currentColor" stroke-width="1.65" stroke-linecap="round" stroke-linejoin="round"><use href="#flake-arm" transform="rotate(0 26 26)"/><use href="#flake-arm" transform="rotate(60 26 26)"/><use href="#flake-arm" transform="rotate(120 26 26)"/><use href="#flake-arm" transform="rotate(180 26 26)"/><use href="#flake-arm" transform="rotate(240 26 26)"/><use href="#flake-arm" transform="rotate(300 26 26)"/><path d="m26 18 7 4v8l-7 4-7-4v-8z"/><path d="m26 22 3.5 2v4l-3.5 2-3.5-2v-4z" fill="currentColor" stroke="none"/></g></svg></div><div><h1>梦幻冰雪大世界</h1><small>HARBIN ICE &amp; SNOW WORLD</small></div></header>\n<div class="location glass"><i class="dot"></i><span id="modeLabel">自由探索</span><i class="divider"></i><svg data-i="pin"></svg><b id="regionLabel">中心广场</b></div>\n<div class="compass"><canvas id="compass"></canvas><i></i></div>\n<div class="tools glass"><button id="timeBtn" title="切换时段" aria-label="切换时段"><svg data-i="moon"></svg><span id="timeLabel">夜晚</span></button><i class="divider"></i><button id="audioBtn" title="开启声音" aria-label="开启声音"><svg data-i="muted"></svg></button><button id="settingsBtn" title="游戏设置" aria-label="游戏设置"><svg data-i="settings"></svg></button><button id="fullBtn" title="全屏" aria-label="全屏"><svg data-i="expand"></svg></button></div>\n<button id="mapBtn" class="mini glass" title="打开园区地图 (M)" aria-label="打开园区地图"><span class="drawing"><canvas id="mini"></canvas><b>N</b></span><span class="map-foot"><span><svg data-i="map"></svg>园区地图</span><kbd>M</kbd></span></button>\n<div id="way" hidden><i></i><span>冰雪城堡</span><small></small></div><b class="reticle"></b>\n<aside class="quest glass"><div class="qtop"><span><svg data-i="book"></svg>探索手记</span><b id="explored" title="已探索区域">14%</b></div><div class="qbody"><svg class="gem" viewBox="0 0 36 44" fill="none"><path d="m18 2 12 14-4 17-8 9-10-12-3-13z" fill="#67cdd3" fill-opacity=".21" stroke="#a4f8ef" stroke-width="1.3"/><path d="m18 2-4 16 4 24 5-25z" fill="#96f2ed" fill-opacity=".66"/><path d="m5 17 9 1 9-1 7-1M8 30l6-12M26 33l-3-16" stroke="#b5fffb" stroke-width=".9"/></svg><div class="qinfo"><div><strong>寻觅冰晶</strong><span><b id="count">0</b> / 7</span></div><div id="ticks"><i></i><i></i><i></i><i></i><i></i><i></i><i></i></div><small id="goal">集齐冰晶，点亮极光盛典</small></div></div></aside>\n<div id="prompt"><button id="interactBtn" class="glass"><kbd>E</kbd><strong id="actionName">园区导览</strong><svg data-i="sign"></svg></button></div>\n<div class="actions"><button id="skatesBtn" class="glass" aria-pressed="false" title="穿上冰鞋 (R)"><svg data-i="skate"></svg><span>冰鞋</span><kbd>R</kbd></button><button id="viewBtn" class="glass" title="切换视角 (V)"><svg data-i="user"></svg><span>视角</span><kbd>V</kbd></button><button id="photoBtn" class="glass" title="拍照模式 (P)"><svg data-i="camera"></svg><span>拍照</span><kbd>P</kbd></button></div>\n<footer><span class="move-keys"><kbd>W</kbd><kbd>A</kbd><kbd>S</kbd><kbd>D</kbd></span><span>移动</span><span class="item"><svg data-i="mouse"></svg>拖动环顾</span><span class="item"><kbd>Shift</kbd>奔跑</span><span class="item"><kbd>Space</kbd>跳跃</span><button id="helpBtn"><svg data-i="help"></svg>操作指南</button></footer></div>\n<div id="touch"><div id="joy"><i></i></div><div class="touchbuttons"><button id="run" aria-label="切换奔跑">跑</button><button id="jump" aria-label="跳跃">跳</button></div></div>\n<div id="photo" hidden><div class="photo-badge glass"><svg data-i="camera"></svg>拍照模式</div><i class="frame tl"></i><i class="frame tr"></i><i class="frame bl"></i><i class="frame br"></i><div class="photo-tools glass"><button id="lower" title="降低镜头">−</button><span>高度</span><button id="higher" title="升高镜头">＋</button><i class="divider"></i><button id="shutter"><svg data-i="camera"></svg>保存照片</button><button id="exitPhoto" aria-label="退出拍照"><svg data-i="close"></svg></button></div></div>\n<div id="banner" class="glass" hidden></div><div id="toast" role="status" aria-live="polite"></div>\n<div id="overlay" hidden><section id="dialog" class="glass" role="dialog" aria-modal="true" aria-labelledby="dialogTitle"><header><div><small id="kicker"></small><h2 id="dialogTitle"></h2></div><button id="closeDlg" aria-label="关闭"><svg data-i="close"></svg></button></header><div id="body"></div></section></div>\n<div id="loading"><div>❄</div><strong>梦幻冰雪大世界</strong><span>正在点亮冰雪乐园</span><i></i></div></main>';
 function boot() {
   try {
     play(THREE);

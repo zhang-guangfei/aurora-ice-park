@@ -86,12 +86,13 @@ async function check() {
         ice.resize(width, height, level);
         const frozen = walk('frozen'), cached = walk('cached'), reference = walk('reference');
         const maxError = path => Math.max(...path.centers.map((p, i) => distance(p, reference.centers[i])));
+        const pixelsPerMirrorTexel = width / ice.rt.width;
         const before = captures;
         camera.position.x += 25; ice.reflect([], clock + 4.001);
         camera.rotateY(0.25); ice.reflect([], clock + 4.002);
         camera.fov -= 3; camera.updateProjectionMatrix(); ice.reflect([], clock + 4.003);
         ice.resize(width / 2, height / 2, level); ice.reflect([], clock + 4.004);
-        outcomes.push({ level, oldError: maxError(frozen), error: maxError(cached),
+        outcomes.push({ level, pixelsPerMirrorTexel, oldError: maxError(frozen), error: maxError(cached),
           captures: cached.captures, referenceCaptures: reference.captures, cutCaptures: captures - before });
       }
       const beforeLow = captures;
@@ -103,7 +104,7 @@ async function check() {
       console.log(m.level + ': held image ' + m.oldError.toFixed(2) + ' px, reprojected ' +
         m.error.toFixed(2) + ' px from full redraw; ' + m.captures + ' capture for 5 screen frames');
       assert.ok(m.oldError > 4, 'Walking must expose the original stepping');
-      assert.ok(m.error < 1.8 && m.error < m.oldError * 0.3, 'Reflected landmark drifted under camera translation');
+      assert.ok(m.error < m.pixelsPerMirrorTexel && m.error < m.oldError * 0.3, 'Reflected landmark drifted under camera translation');
       assert.equal(m.captures, 1);
       assert.equal(m.referenceCaptures, 5);
       assert.equal(m.cutCaptures, 4, 'Teleport, turn, zoom and resize must refresh immediately');
