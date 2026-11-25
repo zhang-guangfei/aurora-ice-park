@@ -442,6 +442,25 @@ vec2 reflectionUV() {
   const look = V(0, 0, 0),
     up = V(0, 0, 0),
     bias = new T.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+  let detailedMirror=false, mirrorIce=null;
+  function reflectionSurfaces() {
+    // At the planar probe's smaller resolution the internal transmission pass cannot resolve inclusions.
+    // Keep the same surface shaders and lights, and use their environment refraction in the mirror.
+    const pairs=[], proxies=new Map();
+    scene.traverse(mesh=>{
+      const original=mesh.material;
+      if(!mesh.isMesh || !original?.userData?.glassTransmission) return;
+      let proxy=proxies.get(original);
+      if(!proxy){
+        proxy=original.clone();proxy.transmission=0;
+        proxy.onBeforeCompile=original.onBeforeCompile;
+        proxy.customProgramCacheKey=original.customProgramCacheKey;
+        proxies.set(original,proxy);
+      }
+      pairs.push({mesh,original,proxy});
+    });
+    return pairs;
+  }
   function capture(hide) {
     mirror.copy(camera, false);
     // Leave a border so turning between captures can reveal real reflected pixels.
@@ -462,8 +481,10 @@ vec2 reflectionUV() {
 
     const target = renderer.getRenderTarget(), shadow = renderer.shadowMap.autoUpdate;
     const surfaceVisible = surfaces.visible, visible = hide.map(object => object.visible);
+    const optical = detailedMirror ? (mirrorIce || (mirrorIce=reflectionSurfaces())) : null;
     try {
       surfaces.visible = false;
+      if(optical)for(const pass of optical)pass.mesh.material=pass.proxy;
       for (const object of hide) object.visible = false;
       renderer.shadowMap.autoUpdate = false;
       renderer.setRenderTarget(rt);
@@ -472,6 +493,7 @@ vec2 reflectionUV() {
       renderer.setRenderTarget(target);
       renderer.shadowMap.autoUpdate = shadow;
       surfaces.visible = surfaceVisible;
+      if(optical)for(const pass of optical)pass.mesh.material=pass.original;
       hide.forEach((object, i) => { object.visible = visible[i]; });
     }
   }
@@ -481,6 +503,7 @@ vec2 reflectionUV() {
     rt,
     isIce,
     resize(w, h, level) {
+      detailedMirror = level === 'high';
       enable.value = level === 'low' ? 0 : 1;
       captureInterval = level === 'high' ? 0.082 : 0.17;
       const f = level === 'high' ? 0.52 : 0.37;

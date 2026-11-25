@@ -134,14 +134,17 @@ function landscape(T, k, lighting) {
       const capped = Math.sin(x*97 + y*71 + a*3.1) > -.40 || y > .76;
       if (!capped) mantle.lerp(spruce, .69);
       let previous;
-      for (const u of [0, 0.31, 0.68, 1]) {
-        const r = width * (u === 1 ? 0.015 : u === 0 ? 0.25 : u < 0.4 ? 1 : 0.73);
+      const stations=level===0 ? [0,.31,.68,1] : [0,.47,1];
+      for (const u of stations) {
+        const r = width * (u === 1 ? 0.015 : u === 0 ? 0.25 : u < 0.50 ? 1 : 0.73);
         const off = bend * u * u, cx = x + dx * len * u - dz * off, cz = z + dz * len * u + dx * off;
         const cy = y - fall * (0.26 * u + 0.74 * u * u) + 0.022 * len * Math.sin(u * Math.PI);
         const lift = cap * (r / width);
         const point = (side, dy, tint) => b.v(cx - dz * r * side, cy + dy, cz + dx * r * side, tint);
-        const row = [point(0,-lift*.42,pine),point(1,-lift*.15,spruce),point(.65,lift*.72,mantle),
-          point(0,lift, capped ? powder : mantle),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)];
+        const row = level===0
+          ? [point(0,-lift*.42,pine),point(1,-lift*.15,spruce),point(.65,lift*.72,mantle),
+             point(0,lift,capped?powder:mantle),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)]
+          : [point(0,-lift*.39,pine),point(1,0,spruce),point(0,lift,capped?powder:mantle),point(-1,0,spruce)];
         if (previous) for (let i = 0; i < row.length; i++) {
           const j = (i + 1) % row.length;
           b.tri(previous[i],row[i],row[j]);
@@ -727,7 +730,7 @@ function landscape(T, k, lighting) {
     setQuality(level) {
       for (const light of localLights) light.visible = level !== 'low';
       lastLampUpdate = -1;
-      const dist = level === 'low' ? [16, 43] : level === 'medium' ? [33, 75] : [46, 100];
+      const dist = level === 'low' ? [10, 40] : level === 'medium' ? [18, 63] : [32, 87];
       for (const l of lods) {
         l.levels[1].distance = dist[0];
         l.levels[2].distance = dist[1];
