@@ -1,6 +1,6 @@
 'use strict';
 
-function landscape(T, k) {
+function landscape(T, k, lighting) {
   const group = new T.Group(),
     colliders = [],
     lods = [],
@@ -103,20 +103,26 @@ function landscape(T, k) {
         }
       }
     }
-    mesh(
-      group,
-      b.geo(),
-      new T.MeshStandardMaterial({
-        vertexColors: true,
-        roughness: 0.98,
-        emissive: 0x152539,
-        emissiveIntensity: 0.27,
-      })
-    );
+    const ridge = new T.MeshStandardMaterial({
+      vertexColors: true, roughness: .98, emissive: far ? 0x21314c : 0x101c2d, emissiveIntensity: .23
+    });
+    ridge.onBeforeCompile = shader => {
+      shader.vertexShader = 'varying vec3 ridgePos;\n' + shader.vertexShader.replace(
+        '#include <project_vertex>', '#include <project_vertex>\nridgePos=(modelMatrix*vec4(transformed,1.)).xyz;');
+      shader.fragmentShader = 'varying vec3 ridgePos;\n' + shader.fragmentShader.replace('#include <color_fragment>',
+        `#include <color_fragment>
+        vec3 rockN=normalize(cross(dFdx(ridgePos),dFdy(ridgePos)));
+        float cut=sin(ridgePos.x*.39+ridgePos.z*.27+sin(ridgePos.y*.43)*1.4);
+        float seams=sin(ridgePos.x*.77-ridgePos.y*.67+ridgePos.z*.61+cut)*.5+.5;
+        float snowline=smoothstep(.47,.93,abs(rockN.y)+.12*cut-.11*seams);
+        diffuseColor.rgb*=mix(vec3(.53,.61,.74),vec3(.99,1.03,1.04),snowline);
+        diffuseColor.rgb*=.88+.12*seams;`);
+    };
+    mesh(group, b.geo(), ridge);
   }
-  const pine = C(0x25434a),
-    spruce = C(0x4b6d74),
-    under = C(0x91aeb9),
+  const pine = C(0x173832),
+    spruce = C(0x315748),
+    under = C(0x839da9),
     powder = C(0xe4eff3),
     wood = C(0x64594e);
   function canopy(level, kind) {
@@ -124,16 +130,21 @@ function landscape(T, k) {
       tiers = [13, 10, 6][level],
       lean = (kind - 1) * 0.018;
     function spray(x, y, z, a, len, width, cap, fall, bend, pointed) {
-      const dx = Math.cos(a), dz = Math.sin(a), mantle = powder.clone().lerp(under, rnd() * 0.38);
+      const dx = Math.cos(a), dz = Math.sin(a), mantle = powder.clone().lerp(under, rnd() * 0.49);
+      const capped = Math.sin(x*97 + y*71 + a*3.1) > -.40 || y > .76;
+      if (!capped) mantle.lerp(spruce, .69);
       let previous;
-      for (const u of [0, 0.31, 0.68, 1]) {
-        const r = width * (u === 1 ? 0.015 : u === 0 ? 0.25 : u < 0.4 ? 1 : 0.73);
+      const stations=level===0 ? [0,.31,.68,1] : [0,.47,1];
+      for (const u of stations) {
+        const r = width * (u === 1 ? 0.015 : u === 0 ? 0.25 : u < 0.50 ? 1 : 0.73);
         const off = bend * u * u, cx = x + dx * len * u - dz * off, cz = z + dz * len * u + dx * off;
         const cy = y - fall * (0.26 * u + 0.74 * u * u) + 0.022 * len * Math.sin(u * Math.PI);
         const lift = cap * (r / width);
         const point = (side, dy, tint) => b.v(cx - dz * r * side, cy + dy, cz + dx * r * side, tint);
-        const row = [point(0,-lift*.42,pine),point(1,-lift*.15,spruce),point(.65,lift*.72,mantle),
-          point(0,lift, powder),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)];
+        const row = level===0
+          ? [point(0,-lift*.42,pine),point(1,-lift*.15,spruce),point(.65,lift*.72,mantle),
+             point(0,lift,capped?powder:mantle),point(-.72,lift*.65,mantle),point(-1,-lift*.11,spruce)]
+          : [point(0,-lift*.39,pine),point(1,0,spruce),point(0,lift,capped?powder:mantle),point(-1,0,spruce)];
         if (previous) for (let i = 0; i < row.length; i++) {
           const j = (i + 1) % row.length;
           b.tri(previous[i],row[i],row[j]);
@@ -321,6 +332,7 @@ function landscape(T, k) {
     driftMaterial, nearbyTrees.length
   );
   nearbyTrees.forEach((tree, i) => {
+    lighting?.contact(tree.x,tree.z,tree.h*.40,tree.h*.29,.67,tree.y);
     tr.position.set(tree.x + tree.h * .08, -.047, tree.z - tree.h * .04);
     tr.rotation.y = tree.y * .3;
     tr.scale.set(tree.h * .36, .08 + tree.h * .011, tree.h * .22);
@@ -449,6 +461,7 @@ function landscape(T, k) {
     mesh(g, new T.ConeGeometry(0.043, 0.175, 7), bronze, 0, 4.17, 0);
     colliders.push({ type: 'circle', x, z, r: 0.31 * s, maxY: 4.3 * s });
     pool(x, z, 7.6 * s);
+    lighting?.pool(x,z,5.4*s,4.5*s,0,[1,.43,.13],.64);
     lamps.push([x, 3.44 * s, z, 1.95 * s]);
   }
   for (const [x, z] of [
@@ -472,6 +485,58 @@ function landscape(T, k) {
     [-57.7, 61.8],
   ])
     lamp(x, z, Math.abs(x) > 15);
+  // Traditional ice lanterns have solid, carved shells surrounding a recessed amber light.
+  const lanternIce = k.ice(0x63cde6,{thickness:.78,transmission:.49,roughness:.23});
+  const lanternLip = k.ice(0xa9e2ed,{roughness:.16});
+  const lampFoot = lathe([[.48,0],[.62,.07],[.63,.16],[.50,.23],[.47,.29]],8);
+  const lampCap = lathe([[.41,0],[.52,.12],[.56,.16],[.46,.23],[.24,.35],[.15,.37],[.14,.42]],8);
+  const shell = lathe([[.38,0],[.43,.11],[.46,.88],[.40,1.02]],8);
+  function iceLantern(x,z,height,tint) {
+    const node=new T.Group(); node.position.set(x,.028,z); node.rotation.y=.16*x; node.scale.setScalar(height); group.add(node);
+    mesh(node,lampFoot,lanternLip);
+    mesh(node,shell,lanternIce,0,.24,0);
+    mesh(node,lampCap,lanternLip,0,1.24,0);
+    ball(node,0,1.73,0,.096,.14,.096,lanternIce);
+    for(let j=0;j<8;j++){
+      const angle=j*A/8, cx=Math.sin(angle),cz=Math.cos(angle);
+      const strip=mesh(node,new T.BoxGeometry(.14,.67,.026),tint,.422*cx,.82,.422*cz);
+      strip.rotation.y=angle;
+      rod(node,V(.397*cx,.34,.397*cz),V(.435*cx,1.22,.435*cz),.029,lanternLip);
+    }
+    const atY=.85*height;
+    lighting?.pool(x,z,3.1*height,3.9*height,.2,[1,.43,.13],.78);
+    lighting?.contact(x,z,1.13*height,.85*height,.56);
+    lamps.push([x,atY,z,1.2*height]);
+    colliders.push({type:'circle',x,z,r:.62*height,maxY:1.81*height});
+  }
+  for(const [x,z,h] of [[-10.4,58.0,1.38],[10.55,57.7,1.18],[-11.8,24.5,1.03],[11.9,24.0,1.14],[-14.4,-18.0,1.18],[14.1,-18.4,1.33]]){
+    iceLantern(x,z,h,warm);
+  }
+  const twinkles = [], wire = k.metal(0x514b37);
+  for(const tree of trees.filter(tree => (tree.x===28.9 && tree.z===40.8) || (tree.x===-15.8 && tree.z===50) || (tree.x===16.1 && tree.z===48.6))){
+    const market=tree.x===28.9, turns=market?5:3.65, samples=market?105:74, pts=[];
+    for(let i=0;i<=samples;i++){
+      const u=i/samples, y=tree.h*(.19+.755*u), angle=tree.y+turns*A*u;
+      const r=(.32*tree.width*tree.h)*(.12+.88*(1-u)**.82);
+      const p=V(tree.x+r*Math.cos(angle),y,tree.z+r*Math.sin(angle));pts.push(p);
+      if(i%2===0)twinkles.push({p,shade:i%11===0?0x85d7d6: i%5===0?0xffb76b:0xffe1a1,r:market?.083:.071});
+    }
+    mesh(group,new T.TubeGeometry(new T.CatmullRomCurve3(pts),samples,.021,4,false),wire);
+    lighting?.pool(tree.x,tree.z,3.7,3.1,0,[.93,.49,.19],.39);
+    if(market){
+      const outline=new T.Shape();
+      for(let i=0;i<10;i++){const a=Math.PI*.5+A*i/10,r=i%2?.19:.45;
+        if(i)outline.lineTo(r*Math.cos(a),r*Math.sin(a));else outline.moveTo(r*Math.cos(a),r*Math.sin(a));}
+      outline.closePath();
+      mesh(group,new T.ExtrudeGeometry(outline,{depth:.09,bevelEnabled:true,bevelSize:.032,bevelThickness:.029,bevelSegments:1}),warm,tree.x,tree.h+.075,tree.z);
+    }
+  }
+  if(twinkles.length){
+    const beads=new T.InstancedMesh(sphere,new T.MeshBasicMaterial({color:0xffffff}),twinkles.length);
+    twinkles.forEach(({p,shade,r},i)=>{tr.position.copy(p);tr.rotation.set(0,0,0);tr.scale.set(r,r*1.15,r);tr.updateMatrix();
+      beads.setMatrixAt(i,tr.matrix);beads.setColorAt(i,new T.Color(shade).multiplyScalar(1.6));});
+    beads.computeBoundingSphere();group.add(beads);
+  }
   const lanterns = lamps.slice();
   const localLights = lanterns.slice(0, 2).map(lamp => {
     const light = new T.PointLight(0xffab64, 64, 16, 2);
@@ -510,6 +575,7 @@ function landscape(T, k) {
     ball(group, x, 0.948, z, 0.11, 0.047, 0.11, snow);
     lamps.push([x, 0.77, z, 0.87]);
     pool(x, z, 2.65);
+    lighting?.pool(x,z,2.1,2.3,0,[.95,.46,.17],.38);
     colliders.push({ type: 'circle', x, z, r: 0.18, maxY: 1 });
   }
   const g = new T.BufferGeometry();
@@ -664,7 +730,7 @@ function landscape(T, k) {
     setQuality(level) {
       for (const light of localLights) light.visible = level !== 'low';
       lastLampUpdate = -1;
-      const dist = level === 'low' ? [16, 43] : level === 'medium' ? [33, 75] : [46, 100];
+      const dist = level === 'low' ? [10, 40] : level === 'medium' ? [18, 63] : [32, 87];
       for (const l of lods) {
         l.levels[1].distance = dist[0];
         l.levels[2].distance = dist[1];

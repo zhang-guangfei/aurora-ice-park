@@ -8,15 +8,68 @@ function ground(T, renderer, scene, camera, kit) {
   let seed = 9413;
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296,
     V = (x, y, z) => new T.Vector3(x, y, z);
+  // Bake local pools of light and soft contact shadows into one world-space texture.
+  // The same coordinates shade the snow, the rink and every paved ice path.
+  const lightSize = 384, lightSpan = 224, lightData = new Uint8Array(lightSize * lightSize * 4);
+  const irradiance = new T.DataTexture(lightData, lightSize, lightSize, T.RGBAFormat);
+  irradiance.minFilter = irradiance.magFilter = T.LinearFilter;
+  irradiance.needsUpdate = true;
+  function stampLight(x, z, rx, rz, angle, color, strength) {
+    const scale = lightSize / lightSpan, cs = Math.cos(angle), sn = Math.sin(angle);
+    const ex = Math.hypot(rx * cs, rz * sn), ez = Math.hypot(rx * sn, rz * cs);
+    const px = (x / lightSpan + .5) * lightSize - .5, pz = (z / lightSpan + .5) * lightSize - .5;
+    const maxX = Math.min(lightSize - 1, Math.ceil(px + ex * scale));
+    const maxZ = Math.min(lightSize - 1, Math.ceil(pz + ez * scale));
+    for (let j = Math.max(0, Math.floor(pz - ez * scale)); j <= maxZ; j++) {
+      for (let i = Math.max(0, Math.floor(px - ex * scale)); i <= maxX; i++) {
+        const dx = (i - px) / scale, dz = (j - pz) / scale;
+        const u = (dx * cs + dz * sn) / rx, v = (-dx * sn + dz * cs) / rz;
+        const d = 1 - u * u - v * v;
+        if (d <= 0) continue;
+        const f = d * d * strength * 255, k = 4 * (j * lightSize + i);
+        if (color) {
+          for (let c = 0; c < 3; c++) lightData[k+c] = Math.min(255, lightData[k+c] + f * color[c]);
+        } else lightData[k+3] = Math.max(lightData[k+3], Math.min(255, f));
+      }
+    }
+  }
+  const lighting = {
+    texture: irradiance,
+    pool: (x, z, rx, rz, angle, color, strength) => stampLight(x, z, rx, rz, angle, color, strength),
+    contact: (x, z, rx, rz, strength, angle = 0) => stampLight(x, z, rx, rz, angle, null, strength),
+  };
+  function groundLight(shader, varying, receive) {
+    shader.uniforms.parkIrradiance = { value: irradiance };
+    shader.uniforms.parkNight = kit.nightLight || { value: 1 };
+    shader.fragmentShader = 'uniform sampler2D parkIrradiance;uniform float parkNight;\n' + shader.fragmentShader.replace(
+      '#include <opaque_fragment>',
+      'vec4 bakedLight=texture2D(parkIrradiance,' + varying + '.xz/224.+.5);\n' +
+      'outgoingLight*=1.-.53*bakedLight.a; outgoingLight+=bakedLight.rgb*' + receive + '*(.13+.87*parkNight);\n#include <opaque_fragment>'
+    );
+  }
   const map = kit.snowMap.clone();
   map.repeat.set(90, 90);
   map.needsUpdate = true;
   const gm = kit.snow.clone();
   gm.map = map;
-  gm.normalMap = kit.normal.clone();
+  gm.normalMap = (kit.snowNormal || kit.normal).clone();
   gm.normalMap.repeat.set(80, 80);
   gm.normalMap.needsUpdate = true;
   gm.vertexColors = true;
+  gm.onBeforeCompile = shader => {
+    shader.vertexShader = 'varying vec3 snowWorld;\n' + shader.vertexShader.replace(
+      '#include <project_vertex>', '#include <project_vertex>\nsnowWorld=(modelMatrix*vec4(transformed,1.)).xyz;'
+    );
+    shader.fragmentShader = 'varying vec3 snowWorld;\n' + shader.fragmentShader.replace(
+      '#include <color_fragment>', `#include <color_fragment>
+      float crossWind=snowWorld.x*.74+snowWorld.z*.42;
+      float folds=sin(crossWind+sin(snowWorld.z*.54)*.93+sin(snowWorld.x*.36)*.51);
+      float bank=smoothstep(.28,.93,folds)*(.55+.45*sin(snowWorld.z*.27+snowWorld.x*.18));
+      diffuseColor.rgb*=vec3(.90,.94,.99)+vec3(.10,.077,.055)*bank;`
+    );
+    groundLight(shader, 'snowWorld', '.82');
+  };
+  gm.customProgramCacheKey = () => 'wind-snow-pools-1';
   const field = new T.PlaneGeometry(470, 470, 96, 96).rotateX(-Math.PI / 2),
     a = field.attributes.position,
     col = new Float32Array(a.count * 3);
@@ -71,6 +124,32 @@ function ground(T, renderer, scene, camera, kit) {
   tex.wrapS = tex.wrapT = T.RepeatWrapping;
   tex.colorSpace = T.SRGBColorSpace;
   tex.anisotropy = Math.min(8, renderer.capabilities.getMaxAnisotropy());
+  // Blade scratches cross in paired arcs. The texture tiles at all four boundaries.
+  const wearCanvas=document.createElement('canvas');
+  wearCanvas.width=wearCanvas.height=512;
+  const ink=wearCanvas.getContext('2d');
+  ink.fillStyle='#000';ink.fillRect(0,0,512,512);
+  ink.globalCompositeOperation='lighter';ink.lineCap='round';
+  for(let mark=0;mark<54;mark++){
+    const x=rnd()*512,z=rnd()*512,angle=rnd()*Math.PI*2;
+    const length=36+122*rnd(),curl=(rnd()-.5)*length, gap=3.5+rnd()*3;
+    for(const offset of [0,gap]){
+      const path=new Path2D();path.moveTo(0,offset);
+      path.bezierCurveTo(length*.28,offset+curl*.08,length*.65,offset+curl*.76,length,offset+curl);
+      ink.lineWidth=.60+.55*rnd();ink.strokeStyle='rgba(224,0,0,'+(.18+.54*rnd())+')';
+      for(const ox of [-512,0,512])for(const oz of [-512,0,512]){
+        ink.setTransform(Math.cos(angle),Math.sin(angle),-Math.sin(angle),Math.cos(angle),x+ox,z+oz);ink.stroke(path);
+      }
+    }
+  }
+  ink.resetTransform();
+  for(let j=0;j<280;j++){
+    const x=rnd()*512,z=rnd()*512;ink.fillStyle='rgba(0,255,0,'+(.18+.58*rnd())+')';
+    ink.beginPath();ink.ellipse(x,z,.48+rnd()*1.1,.52+rnd()*1.25,0,0,Math.PI*2);ink.fill();
+  }
+  const wear=new T.CanvasTexture(wearCanvas);
+  wear.wrapS=wear.wrapT=T.RepeatWrapping;
+  wear.anisotropy=Math.min(8,renderer.capabilities.getMaxAnisotropy());
   const rt = new T.WebGLRenderTarget(640, 360, {
     type: T.UnsignedByteType,
     minFilter: T.LinearFilter,
@@ -113,6 +192,8 @@ function ground(T, renderer, scene, camera, kit) {
       s.uniforms.rMat = { value: matrix };
       s.uniforms.rEnabled = enable;
       s.uniforms.rGloss = { value: gloss };
+      s.uniforms.iceWear = { value: wear };
+      s.uniforms.wearAmount = { value: pattern ? .44 : 1 };
       s.vertexShader =
         'varying vec4 projIce;varying vec3 worldIce;uniform mat4 rMat;\n' +
         s.vertexShader.replace(
@@ -122,8 +203,8 @@ function ground(T, renderer, scene, camera, kit) {
       s.fragmentShader =
         `varying vec4 projIce;
 varying vec3 worldIce;
-uniform sampler2D rTex;
-uniform float rEnabled, rGloss;
+uniform sampler2D rTex, iceWear;
+uniform float rEnabled, rGloss, wearAmount;
 #ifdef ICE_DEPTH_REPROJECTION
 uniform sampler2D rDepth;
 uniform vec4 rEyeInCapture;
@@ -151,22 +232,26 @@ vec2 reflectionUV() {
 ` +
         s.fragmentShader.replace(
           '#include <opaque_fragment>',
-          `if (rEnabled>.5 && projIce.w>.001) {
+          `vec2 cuts=texture2D(iceWear,worldIce.xz*.115).rg;
+ float wearDetail=wearAmount*(1.-smoothstep(11.,38.,length(worldIce-cameraPosition)));
+ if (rEnabled>.5 && projIce.w>.001) {
  vec2 reflUV=reflectionUV();
  float frost=.5+.5*sin(worldIce.x*.65+sin(worldIce.z*.42)*2.7)*cos(worldIce.z*.31+worldIce.x*.34);
  vec2 grains=vec2(sin(worldIce.x*4.7+worldIce.z*.81),cos(worldIce.z*3.6+worldIce.x*.59))*(.00016+.00053*frost);
  float grazing=1.-clamp(normalize(cameraPosition-worldIce).y,0.,1.);
- vec2 uv=clamp(reflUV+grains,vec2(.003),vec2(.997)), spread=vec2(.00072,.00175)*(.6+frost);
+ vec2 uv=clamp(reflUV+grains,vec2(.003),vec2(.997)), spread=vec2(.00072,.00175)*(.6+frost+cuts.r*wearDetail);
  vec3 refl=.44*texture2D(rTex,uv).rgb+.18*(texture2D(rTex,uv+spread).rgb+texture2D(rTex,uv-spread).rgb)
           +.10*(texture2D(rTex,uv+vec2(spread.x,-spread.y)).rgb+texture2D(rTex,uv+vec2(-spread.x,spread.y)).rgb);
  vec2 border=min(reflUV,1.0-reflUV);
  float inside=smoothstep(0.0,0.012,min(border.x,border.y));
  outgoingLight=mix(outgoingLight,refl*vec3(.84,.95,1.05)+diffuseColor.rgb*.023,inside*rGloss*(.27+.65*grazing)*(1.-.28*frost));
  }
+ outgoingLight+=cuts.r*wearDetail*vec3(.15,.22,.25)+cuts.g*wearDetail*vec3(.07,.12,.14);
  #include <opaque_fragment>`
         );
+      groundLight(s, 'worldIce', '.48');
     };
-    m.customProgramCacheKey = () => 'mirror-floe-6';
+    m.customProgramCacheKey = () => 'mirror-floe-pools-7';
     return m;
   }
   const road = makeRoad(0x7c9eaf, 0.77),
@@ -354,35 +439,28 @@ vec2 reflectionUV() {
   ring(-1, 10, 18.7, 0.1, 0.69, 0.094);
   ring(-1, 10, 17.8, 0.045, 0.69, 0.095);
   ring(43, 70, 14.55, 0.055, 0.658, 0.098);
-  const beamGeo = new T.CylinderGeometry(1, 0.12, 1, 22, 1, true),
-    beamMat = new T.ShaderMaterial({
-      transparent: true,
-      blending: T.AdditiveBlending,
-      side: T.DoubleSide,
-      depthWrite: false,
-      uniforms: { t: kit.clock, fun: kit.festival },
-      vertexShader:
-        'varying vec2 v;void main(){v=uv;gl_Position=projectionMatrix*modelViewMatrix*vec4(position,1.);}',
-      fragmentShader:
-        'varying vec2 v;uniform float t,fun;void main(){float fade=pow(max(0.,1.-v.y),1.8);vec3 c=mix(vec3(.31,.56,.97),vec3(.82,.37,.85),smoothstep(.2,.8,sin(t*.23+v.x)));gl_FragColor=vec4(c,(.035+.044*fun)*fade);}',
-    });
-  for (const [x, z, h, rot] of [
-    [-21, -34, 23, 0.18],
-    [18, -35, 27, -0.17],
-    [-10, -32, 21, -0.15],
-    [10, -33, 20, 0.13],
-    [-12, 9, 12, -0.13],
-  ]) {
-    const b = new T.Mesh(beamGeo, beamMat);
-    b.scale.set(2.5, h, 2.5);
-    b.rotation.z = rot;
-    b.position.set(x - Math.sin(rot) * h * 0.5, 0.15 + h * 0.5, z);
-    b.renderOrder = 1;
-    scene.add(b);
-  }
   const look = V(0, 0, 0),
     up = V(0, 0, 0),
     bias = new T.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+  let detailedMirror=false, mirrorIce=null;
+  function reflectionSurfaces() {
+    // At the planar probe's smaller resolution the internal transmission pass cannot resolve inclusions.
+    // Keep the same surface shaders and lights, and use their environment refraction in the mirror.
+    const pairs=[], proxies=new Map();
+    scene.traverse(mesh=>{
+      const original=mesh.material;
+      if(!mesh.isMesh || !original?.userData?.glassTransmission) return;
+      let proxy=proxies.get(original);
+      if(!proxy){
+        proxy=original.clone();proxy.transmission=0;
+        proxy.onBeforeCompile=original.onBeforeCompile;
+        proxy.customProgramCacheKey=original.customProgramCacheKey;
+        proxies.set(original,proxy);
+      }
+      pairs.push({mesh,original,proxy});
+    });
+    return pairs;
+  }
   function capture(hide) {
     mirror.copy(camera, false);
     // Leave a border so turning between captures can reveal real reflected pixels.
@@ -403,8 +481,10 @@ vec2 reflectionUV() {
 
     const target = renderer.getRenderTarget(), shadow = renderer.shadowMap.autoUpdate;
     const surfaceVisible = surfaces.visible, visible = hide.map(object => object.visible);
+    const optical = detailedMirror ? (mirrorIce || (mirrorIce=reflectionSurfaces())) : null;
     try {
       surfaces.visible = false;
+      if(optical)for(const pass of optical)pass.mesh.material=pass.proxy;
       for (const object of hide) object.visible = false;
       renderer.shadowMap.autoUpdate = false;
       renderer.setRenderTarget(rt);
@@ -413,14 +493,17 @@ vec2 reflectionUV() {
       renderer.setRenderTarget(target);
       renderer.shadowMap.autoUpdate = shadow;
       surfaces.visible = surfaceVisible;
+      if(optical)for(const pass of optical)pass.mesh.material=pass.original;
       hide.forEach((object, i) => { object.visible = visible[i]; });
     }
   }
   return {
     road,
+    lighting,
     rt,
     isIce,
     resize(w, h, level) {
+      detailedMirror = level === 'high';
       enable.value = level === 'low' ? 0 : 1;
       captureInterval = level === 'high' ? 0.082 : 0.17;
       const f = level === 'high' ? 0.52 : 0.37;

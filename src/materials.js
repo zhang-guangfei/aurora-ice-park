@@ -4,7 +4,8 @@ function makeKit(T, renderer, scene) {
     mcache = new Map(),
     gcache = new Map(),
     clock = { value: 0 },
-    festival = { value: 0 };
+    festival = { value: 0 },
+    nightLight = { value: 1 };
   let seed = 709;
   const rnd = () => (seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0) / 4294967296;
   const canvas = (w, h = w) => {
@@ -59,11 +60,28 @@ function makeKit(T, renderer, scene) {
   const snowMap = new T.CanvasTexture(sf);
   snowMap.colorSpace = T.SRGBColorSpace;
   snowMap.wrapS = snowMap.wrapT = T.RepeatWrapping;
+  // A separate wind-packed snow normal keeps the fracture pattern exclusive to ice.
+  const powderSize=128, relief=new Float32Array(powderSize*powderSize);
+  const powderPixels=new Uint8Array(relief.length*4), tau=Math.PI*2;
+  for(let y=0;y<powderSize;y++)for(let x=0;x<powderSize;x++){
+    const u=x/powderSize,v=y/powderSize;
+    const wind=Math.sin(tau*(u*2+v)+.80*Math.sin(tau*v*2)+.39*Math.sin(tau*u));
+    relief[y*powderSize+x]=.43*wind+.24*Math.sin(tau*(3*u-7*v)+1.32*wind)+.14*rnd();
+  }
+  const height=(x,y)=>relief[(y&127)*128+(x&127)];
+  for(let y=0;y<powderSize;y++)for(let x=0;x<powderSize;x++){
+    const dx=(height(x+1,y)-height(x-1,y))*1.65, dy=(height(x,y+1)-height(x,y-1))*1.65;
+    const n=1/Math.hypot(dx,dy,1), i=(y*powderSize+x)*4;
+    powderPixels.set([128-126*dx*n,128-126*dy*n,128+127*n,255],i);
+  }
+  const snowNormal=new T.DataTexture(powderPixels,powderSize,powderSize);
+  snowNormal.wrapS=snowNormal.wrapT=T.RepeatWrapping;snowNormal.generateMipmaps=true;
+  snowNormal.minFilter=T.LinearMipmapLinearFilter;snowNormal.magFilter=T.LinearFilter;snowNormal.needsUpdate=true;
   const snow = new T.MeshStandardMaterial({
     color: 0xeaf6ff,
     map: snowMap,
-    normalMap: norm,
-    normalScale: new T.Vector2(0.12, 0.12),
+    normalMap: snowNormal,
+    normalScale: new T.Vector2(0.27, 0.27),
     roughness: 0.81,
     metalness: 0.025,
   });
@@ -71,11 +89,11 @@ function makeKit(T, renderer, scene) {
     e = env.getContext('2d'),
     gr = e.createLinearGradient(0, 0, 0, 256);
   for (const [p, color] of [
-    [0, '#16253e'],
-    [0.32, '#4a6b94'],
-    [0.48, '#badfe6'],
-    [0.57, '#51647f'],
-    [1, '#253652'],
+    [0, '#101b38'],
+    [0.32, '#344872'],
+    [0.48, '#929faa'],
+    [0.57, '#374767'],
+    [1, '#1d2940'],
   ])
     gr.addColorStop(p, color);
   e.fillStyle = gr;
@@ -85,7 +103,9 @@ function makeKit(T, renderer, scene) {
     [118, 13, 47, '#c7f8ff'],
     [205, 27, 56, '#cebddd'],
     [353, 48, 83, '#edf8ff'],
-    [461, 16, 54, '#a7bdff'],
+    [461, 16, 54, '#9eb3ef'],
+    [280, 18, 13, '#e8ae72'],
+    [153, 21, 16, '#75c7e3'],
   ]) {
     e.fillStyle = c;
     e.fillRect(x, 120 - h / 2, w, h);
@@ -98,24 +118,86 @@ function makeKit(T, renderer, scene) {
   scene.environment = filtered.texture;
   pm.dispose();
   et.dispose();
+  // A tile of trapped air, fracture fans and cloudy laminae, packed into independent channels.
+  // It is sampled twice at different optical depths, so inclusions move behind the polished face.
+  function makeInclusions() {
+    const size = 512, tile = canvas(size), ctx = tile.getContext('2d');
+    const pixels = ctx.createImageData(size, size);
+    const field = Array.from({ length: 1024 }, rnd);
+    function noise(x, y) {
+      const ix = Math.floor(x), iy = Math.floor(y);
+      let u = x - ix, v = y - iy; u = u * u * (3 - 2 * u); v = v * v * (3 - 2 * v);
+      const at = (a, b) => field[(a & 31) + 32 * (b & 31)];
+      return (at(ix, iy) * (1 - u) + at(ix + 1, iy) * u) * (1 - v) +
+        (at(ix, iy + 1) * (1 - u) + at(ix + 1, iy + 1) * u) * v;
+    }
+    for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) {
+      const u = x / size, v = y / size, tilt = Math.sin(2 * Math.PI * (u + v)) * 2.4;
+      const sheet = noise(32 * u + tilt, 32 * v - tilt * .4);
+      const band = .5 + .5 * Math.sin(2 * Math.PI * (3 * v - u + .2 * Math.sin(2 * Math.PI * u)) + sheet * 2.8);
+      const k = 4 * (size * y + x);
+      pixels.data[k + 2] = (band ** 5 * .59 + sheet * .22 + .095 * rnd()) * 225;
+      pixels.data[k + 3] = 255;
+    }
+    ctx.putImageData(pixels, 0, 0);
+    ctx.globalCompositeOperation = 'lighter';
+    ctx.lineJoin = ctx.lineCap = 'round';
+    const drawWrapped = draw => {
+      for (const ox of [-size, 0, size]) for (const oy of [-size, 0, size]) {
+        ctx.setTransform(1, 0, 0, 1, ox, oy); draw();
+      }
+      ctx.resetTransform();
+    };
+    function fracture(x, y, angle, length, strength, branch) {
+      const path = new Path2D(); path.moveTo(x, y);
+      const count = 4 + Math.floor(rnd() * 5);
+      for (let i = 0; i < count; i++) {
+        angle += (rnd() - .5) * .58;
+        x += Math.cos(angle) * length / count; y += Math.sin(angle) * length / count;
+        path.lineTo(x, y);
+        if (branch && (i === 1 || i === count - 3)) fracture(x, y, angle + (i === 1 ? 1 : -1) * (.35 + .5 * rnd()), length * (.24 + .18 * rnd()), strength * .55, false);
+      }
+      ctx.strokeStyle = 'rgba(240,0,0,' + strength + ')';
+      ctx.lineWidth = branch ? 1.25 : .72;
+      drawWrapped(() => ctx.stroke(path));
+    }
+    for (let i = 0; i < 21; i++) {
+      const x = rnd() * size, y = rnd() * size, angle = rnd() * Math.PI * 2;
+      fracture(x, y, angle, 34 + 110 * rnd(), .38 + .5 * rnd(), true);
+      if (i % 3 === 0) fracture(x, y, angle + 2.5, 18 + 62 * rnd(), .54, true);
+    }
+    for (let i = 0; i < 38; i++) {
+      const x = size * rnd(), y = size * rnd();
+      for (let j = 0; j < 15; j++) {
+        const radius = .55 + 1.45 * rnd() ** 2, px = (x + rnd() * 16) % size, py = (y + j * (2 + rnd())) % size;
+        ctx.fillStyle = 'rgba(0,226,0,' + (.27 + .6 * rnd()) + ')';
+        ctx.beginPath(); ctx.ellipse(px, py, radius, radius * (.85 + rnd()), 0, 0, 2 * Math.PI); ctx.fill();
+      }
+    }
+    const map = new T.CanvasTexture(tile);
+    map.wrapS = map.wrapT = T.RepeatWrapping;
+    map.anisotropy = Math.min(4, renderer.capabilities.getMaxAnisotropy());
+    return map;
+  }
+  const inclusions = makeInclusions();
   function ice(color = 0x92deed, opts = {}) {
     if (!opts || typeof opts !== 'object') opts = {};
     const k = String(color) + JSON.stringify(opts);
     if (cache.has(k)) return cache.get(k);
     const tint = new T.Color(color),
       mat = new T.MeshPhysicalMaterial({
-        color: tint.clone().lerp(new T.Color(0xbddcf0), 0.055).multiplyScalar(0.77),
+        color: tint.clone().lerp(new T.Color(0xbddcf0), 0.055).multiplyScalar(0.62),
         emissive: tint,
         emissiveIntensity: opts.emissiveIntensity ?? 0.085,
-        roughness: opts.roughness ?? 0.19,
-        metalness: opts.metalness ?? 0.07,
-        clearcoat: 0.76,
+        roughness: opts.roughness ?? 0.205,
+        metalness: opts.metalness ?? 0.025,
+        clearcoat: 0.61,
         clearcoatRoughness: 0.16,
         envMapIntensity: 0.95,
-        transmission: opts.transmission ?? 0.26,
+        transmission: opts.transmission ?? 0.40,
         ior: 1.31,
         thickness: opts.thickness ?? 1.5,
-        attenuationDistance: 5,
+        attenuationDistance: 3.55,
         attenuationColor: tint.clone().lerp(new T.Color(0xffffff), 0.5),
         normalMap: norm,
         normalScale: new T.Vector2(0.19, 0.19),
@@ -125,6 +207,8 @@ function makeKit(T, renderer, scene) {
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uClock = clock;
       shader.uniforms.uFest = festival;
+      shader.uniforms.iceLayers = { value: inclusions };
+      shader.uniforms.uNight = nightLight;
       shader.vertexShader =
         'varying vec3 icePos;\n' +
         shader.vertexShader.replace(
@@ -137,38 +221,61 @@ function makeKit(T, renderer, scene) {
      icePos=(modelMatrix*iceVertex).xyz;`
         );
       shader.fragmentShader =
-        'varying vec3 icePos;uniform float uClock,uFest;\n' +
+        'varying vec3 icePos; uniform float uClock,uFest,uNight; uniform sampler2D iceLayers;\n' +
         shader.fragmentShader.replace(
           '#include <emissivemap_fragment>',
           `#include <emissivemap_fragment>
-       float vein=pow(1.-abs(sin(dot(icePos,vec3(.58,.91,.45))+sin(icePos.y*.39)*1.6)),15.);
-       float fr=pow(1.-max(dot(normalize(normal),normalize(vViewPosition)),0.),2.5);
-       vec3 spectrum=.5+.5*cos(icePos.y*.08+icePos.x*.031+uClock*.23+vec3(.65,2.15,4.7));
-       totalEmissiveRadiance*=.87+.13*sin(uClock*.25+icePos.x*.064+icePos.z*.037);
-       float facade=(1.-smoothstep(-29.,-20.,icePos.z))*(1.-smoothstep(32.,40.,abs(icePos.x)));
-       vec3 wallNormal=inverseTransformDirection(normalize(normal),viewMatrix);
-       vec3 faceNormal=abs(normalize(cross(dFdx(icePos),dFdy(icePos))));
-       float side=mix(icePos.x,icePos.z,step(faceNormal.z,faceNormal.x));
+       vec3 viewDir=normalize(vViewPosition);
+       float fr=pow(1.-clamp(dot(normalize(normal),viewDir),0.,1.),2.6);
+       vec3 worldN=inverseTransformDirection(normalize(normal),viewMatrix);
+       vec3 incident=normalize(icePos-cameraPosition), bent=refract(incident,worldN,1./1.31);
+       vec2 cutUV=vec2(dot(icePos,vec3(.245,.021,.116)),dot(icePos,vec3(-.073,.257,.167)));
+       vec2 shift=vec2(dot(bent,vec3(.245,.021,.116)),dot(bent,vec3(-.073,.257,.167)));
+       vec3 skin=texture2D(iceLayers,cutUV).rgb;
+       vec3 core=texture2D(iceLayers,cutUV*.67+shift*.84+vec2(.31,.72)).rgb;
+       float nearDetail=1.-smoothstep(24.,89.,length(vViewPosition));
+       float fracture=(skin.r*.86+core.r*.55+skin.g*.60+core.g*.32)*nearDetail;
+       float haze=.52*skin.b+.48*core.b;
+       vec3 faceN=abs(normalize(cross(dFdx(icePos),dFdy(icePos))));
+       float facade=(1.-smoothstep(-29.,-20.,icePos.z))*(1.-smoothstep(34.,42.,abs(icePos.x)));
+       float side=mix(icePos.x,icePos.z,step(faceN.z,faceN.x));
        vec2 course=vec2(side/1.72+.5*mod(floor((icePos.y+.16)/.83),2.),(icePos.y+.16)/.83);
-       vec2 edge=abs(fract(course+.5)-.5);
-       vec2 aa=max(vec2(.013),fwidth(course)*.68);
-       float joint=max(1.-smoothstep(.012,.012+aa.x,edge.x),1.-smoothstep(.016,.016+aa.y,edge.y));
+       vec2 edge=abs(fract(course+.5)-.5), aa=max(vec2(.009),fwidth(course)*.72);
+       float joint=max(1.-smoothstep(.014,.014+aa.x,edge.x),1.-smoothstep(.019,.019+aa.y,edge.y));
        float block=fract(sin(dot(floor(course),vec2(42.37,15.67)))*1368.37);
-       float cut=facade*(1.-smoothstep(.59,.91,abs(wallNormal.y)))*(1.-smoothstep(105.,175.,length(vViewPosition)));
-       diffuseColor.rgb*=1.+cut*((block-.5)*.14-joint*.19);
-       vec3 lantern=mix(vec3(.009,.22,.45),vec3(.34,.034,.30),smoothstep(-15.,18.,icePos.x));
+       float cut=facade*(1.-smoothstep(.59,.91,abs(worldN.y)))*(1.-smoothstep(88.,156.,length(vViewPosition)));
+       diffuseColor.rgb*=1.+cut*((block-.5)*.23-joint*.32)+.10*(haze-.3);
+       totalEmissiveRadiance*=.70+.18*uNight+.08*sin(uClock*.25+icePos.x*.064+icePos.z*.037);
+       vec3 depthTint=mix(vec3(.014,.25,.87),vec3(.20,.031,.52),smoothstep(-2.,18.,icePos.x));
+       vec3 flood=mix(vec3(.015,.49,.93),vec3(.63,.057,.52),smoothstep(-8.,22.,icePos.x));
+       float uplight=.16+.84*pow(.5+.5*cos(side*.94+icePos.z*.12),3.);
+       float glowDepth=(.22+1.07*exp(-max(0.,icePos.y)*.081))*uplight;
+       float frostEdge=cut*joint*(.09+.19*fr);
+       totalEmissiveRadiance+=facade*(flood*glowDepth*(1.-cut*joint*.66)+depthTint*(.23*haze+.42*fracture)+vec3(.42,.72,.86)*frostEdge)*(.23+.77*uNight);
        #if defined(USE_ENVMAP) && defined(ENVMAP_TYPE_CUBE_UV)
-       vec3 bentRay=refract(normalize(icePos-cameraPosition),wallNormal,1./1.31);
-       vec3 innerSky=textureCubeUV(envMap,bentRay,.29).rgb;
-       totalEmissiveRadiance+=innerSky*diffuseColor.rgb*(.082+.065*fr);
+       vec3 innerSky=textureCubeUV(envMap,bent,.21+.24*haze).rgb;
+       totalEmissiveRadiance+=innerSky*diffuseColor.rgb*(.068+.062*fr);
        #endif
-       float pool=.22+.78*pow(.5+.5*cos(side*.91+icePos.z*.09),3.);
-       totalEmissiveRadiance+=facade*lantern*(.14+.84*exp(-icePos.y*.082))*pool*(1.-.45*cut*joint);
-       totalEmissiveRadiance+=diffuseColor.rgb*(.073*vein+.105*fr)+spectrum*(.025+uFest*(.28+.22*sin(icePos.y*.25-uClock*2.)))*(.34+fr);`
+       float wrap=.33+.67*max(0.,dot(-worldN,normalize(vec3(-.57,.62,.33))));
+       totalEmissiveRadiance+=vec3(.13,.24,.30)*fracture*(.44+wrap)+diffuseColor.rgb*(.085*fr+.06*haze*wrap);
+       vec3 spectrum=.5+.5*cos(icePos.y*.08+icePos.x*.031+uClock*.23+vec3(.65,2.15,4.7));
+       totalEmissiveRadiance+=spectrum*(.012+uFest*(.28+.22*sin(icePos.y*.25-uClock*2.)))*(.34+fr);`
         );
     };
+    const coat=mat.onBeforeCompile;
+    mat.onBeforeCompile = (shader,renderer) => {
+      coat(shader,renderer);
+      shader.fragmentShader = shader.fragmentShader.replace('#include <opaque_fragment>',
+        `// A slab boundary affects reflections and transmitted light as well as the surface pigment.
+        vec2 lipUV=abs(fract(course+vec2(.48,.467))-.5);
+        float lip=max(1.-smoothstep(.009,.021+aa.x,lipUV.x),1.-smoothstep(.014,.026+aa.y,lipUV.y));
+        float gradedCut=cut*(1.-smoothstep(.30,1.15,max(aa.x,aa.y)));
+        outgoingLight*=1.+gradedCut*((block-.54)*.25-.54*joint);
+        outgoingLight+=gradedCut*max(0.,lip-joint*.69)*vec3(.11,.19,.24)*(.47+.53*uNight);
+        #include <opaque_fragment>`);
+    };
     mat.userData.glassTransmission = mat.transmission;
-    mat.customProgramCacheKey = () => 'park-glacier-4';
+    mat.customProgramCacheKey = () => 'park-glacier-inclusions-5';
     cache.set(k, mat);
     return mat;
   }
@@ -190,7 +297,9 @@ function makeKit(T, renderer, scene) {
     snow,
     clock,
     festival,
+    nightLight,
     normal: norm,
+    snowNormal,
     snowMap,
     quality(q) {
       for (const m of cache.values()) {
