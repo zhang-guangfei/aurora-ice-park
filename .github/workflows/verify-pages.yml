@@ -44,5 +44,4 @@ jobs:
       - name: Check the published game in Chrome
         env:
           RELEASE_REF: ${{ github.event.workflow_run.head_sha || 'origin/gh-pages' }}
-          EXPECT_SKATES: ${{ github.event_name == 'workflow_run' }}
         run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/pages.cjs

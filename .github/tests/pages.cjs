@@ -97,16 +97,36 @@ async function verifyPark() {
     } finally {
       await page.keyboard.up('w');
     }
-    if (process.env.EXPECT_SKATES === 'true') {
-      await page.keyboard.press('r');
-      await page.waitForFunction(() => document.querySelector('#skatesBtn')?.getAttribute('aria-pressed') === 'true'
-        && document.querySelector('#modeLabel').textContent === '冰上漫游');
-      await page.locator('#skatesBtn').click();
-      assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
-      console.log('The public site accepted both keyboard and HUD skate controls outside the rink.');
+    await page.locator('#mapBtn').click();
+    await page.locator('[data-place]').filter({ hasText: '中心广场' }).click();
+    await page.locator('#travelBtn').click();
+    await page.keyboard.press('r');
+    await page.waitForFunction(() => document.querySelector('#skatesBtn').getAttribute('aria-pressed') === 'true'
+      && document.querySelector('#modeLabel').textContent === '冰上漫游');
+    for (const [key, label] of [['d', '穿冰鞋步行'], ['a', '冰上漫游']]) {
+      await page.keyboard.down(key);
+      try {
+        await page.waitForFunction(expected => document.querySelector('#modeLabel').textContent === expected, label);
+      } finally {
+        await page.keyboard.up(key);
+      }
     }
+    await page.locator('#skatesBtn').click();
+    assert.equal(await page.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
+    console.log('Live park: equipped at the plaza, skated off the avenue, walked on snow, glided back on ice and unequipped.');
     assert.deepEqual(errors, []);
     console.log('Walked along the ice avenue in medium quality with planar reflections enabled.');
+
+    await page.close();
+    const phone = await browser.newPage({ viewport: { width: 390, height: 844 }, isMobile: true, hasTouch: true });
+    await phone.addInitScript(() => localStorage.setItem('frostbound.park.v1', JSON.stringify({ quality: 'low' })));
+    await phone.goto(site.href, { waitUntil: 'domcontentloaded' });
+    await phone.waitForFunction(() => document.querySelector('#loading')?.hidden === true, null, { timeout: 90000 });
+    await phone.locator('#skatesBtn').tap();
+    assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'true');
+    await phone.locator('#skatesBtn').tap();
+    assert.equal(await phone.locator('#skatesBtn').getAttribute('aria-pressed'), 'false');
+    console.log('Touch HUD: tapped to put skates on and take them off on a 390px viewport.');
   } finally {
     await browser.close();
   }
