@@ -67,6 +67,7 @@ function play(T) {
           quality,
           time: timeMode,
           third,
+          ownsSkates: player.ownsSkates,
           skatesOn: player.skatesOn,
           volume: audio.volume,
         })
@@ -131,11 +132,15 @@ function play(T) {
   const fx = effects(T, scene, kit);
   scene.add(people.avatar);
   const places = guidebook(rides);
-  const player = { pos: V(0, 0.09, 70), yaw: 0, pitch: 0.164, speed: 0, grounded: true, skating: false, skatesOn: saved.skatesOn === true },
+  const player = { pos: V(0, 0.09, 70), yaw: 0, pitch: 0.164, speed: 0, grounded: true, skating: false,
+    ownsSkates: saved.ownsSkates === true, skatesOn: saved.ownsSkates === true && saved.skatesOn === true },
     velocity = V(),
     photoPos = V(),
     lookDir = V(),
-    cameraGoal = V();
+    cameraGoal = V(),
+    cabinEye = V(), toPalace = V(), toPlaza = V();
+  const palaceView = V(0, 19, -45), plazaView = V(-1, 7, 10), cabinEyeHeight = 1.06;
+  let wheelFreeLook = false;
   let vy = 0,
     mode = 'walk',
     region = 'plaza',
@@ -232,6 +237,24 @@ function play(T) {
       ) * adaptive
     );
   }
+  function viewFov() {
+    if (mode !== 'wheel') return camera.aspect < 1 ? 66 : 54;
+    // Keep a usable horizontal angle on a portrait screen without stretching a wide monitor.
+    const verticalFor = angle => T.MathUtils.radToDeg(2 * Math.atan(Math.tan(T.MathUtils.degToRad(angle / 2)) / camera.aspect));
+    return Math.min(107, verticalFor(118), Math.max(third ? 71 : 75, verticalFor(64)));
+  }
+  function refreshRideView() {
+    const riding = mode === 'wheel', button = $('viewBtn');
+    game.classList.toggle('wheel-ride', riding);
+    button.querySelector('span').textContent = riding ? (third ? '舱外全景' : '窗边广角') : '视角';
+    button.title = riding ? (third ? '切换到窗边广角 (V)' : '切换到舱外全景 (V)') : '切换视角 (V)';
+    button.setAttribute('aria-label', button.title);
+    button.setAttribute('aria-pressed', String(third));
+    if (!photo) {
+      camera.fov = viewFov();
+      camera.updateProjectionMatrix();
+    }
+  }
   function resize() {
     const w = Math.max(1, game.clientWidth),
       h = Math.max(1, game.clientHeight),
@@ -239,7 +262,7 @@ function play(T) {
     renderer.setPixelRatio(pr);
     renderer.setSize(w, h, false);
     camera.aspect = w / h;
-    if (!photo) camera.fov = w / h < 1 ? 66 : 54;
+    if (!photo) camera.fov = viewFov();
     camera.updateProjectionMatrix();
     const res = renderer.getDrawingBufferSize(new T.Vector2());
     post.resize(res.x, res.y, quality);
@@ -274,7 +297,7 @@ function play(T) {
     toast('画质已切换为' + { high: '高', medium: '中', low: '低' }[v] + '档');
   }
   function canGlide(ice) {
-    return mode === 'walk' && player.skatesOn && player.grounded && player.pos.y < 0.22 && ice;
+    return mode === 'walk' && player.ownsSkates && player.skatesOn && player.grounded && player.pos.y < 0.22 && ice;
   }
   function activity() {
     return mode === 'walk' && player.skating ? 'skate' : mode;
@@ -282,20 +305,33 @@ function play(T) {
   function activityLabel() {
     return activity() === 'walk' && player.skatesOn ? '穿冰鞋步行' : localeMode[activity()];
   }
+  function atSkateDesk() {
+    return mode === 'walk' && !photo && player.grounded && player.pos.y < 0.65 &&
+      Math.hypot(player.pos.x - skatingRink.deskX, player.pos.z - skatingRink.deskZ) <= 3.4;
+  }
   function syncSkatesButton() {
     const button = $('skatesBtn');
     button.setAttribute('aria-pressed', String(player.skatesOn));
-    button.title = player.skatesOn ? '脱下冰鞋 (R)' : '穿上冰鞋 (R)';
+    button.querySelector('span').textContent = player.ownsSkates ? '冰鞋' : '领冰鞋';
+    button.title = !player.ownsSkates ? '冰场西门领取冰鞋 (R)' : player.skatesOn ? '脱下冰鞋 (R)' : '穿上冰鞋 (R)';
     button.setAttribute('aria-label', button.title);
   }
   function toggleSkates() {
-    player.skatesOn = !player.skatesOn;
+    const collecting = !player.ownsSkates;
+    if (collecting && !atSkateDesk()) {
+      picked = places.findIndex(place => place.id === 'ice');
+      mapScreen();
+      toast('冰鞋在冰场西门领取');
+      return;
+    }
+    if (collecting) player.ownsSkates = true;
+    player.skatesOn = collecting || !player.skatesOn;
     player.skating = canGlide(terrain.isIce(player.pos.x, player.pos.z));
     if (!player.skatesOn && mode === 'walk') velocity.set(0, 0, 0);
     syncSkatesButton();
     save();
     detect();
-    toast(player.skatesOn ? '已穿冰鞋 · 冰面滑行，雪地步行' : '已脱下冰鞋');
+    toast(collecting ? '已领取并穿上冰鞋' : player.skatesOn ? '已穿冰鞋 · 冰面滑行，雪地步行' : '已脱下冰鞋');
   }
   function stats() {
     const pc = Math.round((visited.size / 7) * 100);
@@ -333,6 +369,7 @@ function play(T) {
     player.skating = false;
     if (old === 'wheel') {
       const p = rides.wheelEntry;
+      refreshRideView();
       relocate(p.x, 0.815, p.z);
       face(0, 14);
     } else if (old === 'slide') {
@@ -353,10 +390,8 @@ function play(T) {
     const dest = places[i];
     closeDialog();
     relocate(...dest.go);
-    face(
-      ...dest.face,
-      dest.id === 'plaza' ? 0.164 : dest.id === 'castle' ? 0.19 : dest.id === 'slide' ? 0.22 : 0.06
-    );
+    if (dest.id === 'ice' && !player.ownsSkates) face(skatingRink.deskX, skatingRink.deskZ, -0.06);
+    else face(...dest.face, dest.id === 'plaza' ? 0.164 : dest.id === 'castle' ? 0.19 : dest.id === 'slide' ? 0.22 : 0.06);
     syncCamera(true);
     nav = i;
     updateArea();
@@ -389,36 +424,45 @@ function play(T) {
   }
   function syncCamera(jump = false) {
     const dir = look();
-    let eye = player.pos.clone();
-    eye.y += mode === 'slide' ? 0.87 : 1.67;
-    if (photo) {
-      camera.position.copy(photoPos);
-      camera.lookAt(photoPos.clone().add(dir));
-      people.avatar.visible = true;
-      return;
-    }
-    people.avatar.visible = third && mode !== 'wheel';
     people.avatar.position.copy(player.pos);
     people.avatar.position.y += 0.012;
     people.avatar.rotation.y = -player.yaw;
-    if (mode === 'wheel') {
-      eye = rides.wheelSeat(seat);
-      if (third) {
-        const normal = V(Math.sin(-0.36), 0, Math.cos(-0.36));
-        people.avatar.visible = true;
-        people.avatar.position.copy(player.pos).addScaledVector(normal, -0.4);
-        cameraGoal.copy(eye).addScaledVector(dir, -3.45);
-        cameraGoal.y += 1.18;
-        const projection = (cameraGoal.x - 53) * normal.x + (cameraGoal.z + 19) * normal.z;
-        if (projection < 2.75) cameraGoal.addScaledVector(normal, 2.75 - projection);
-        camera.position.copy(cameraGoal);
-        camera.lookAt(eye.clone().addScaledVector(dir, 0.8));
-      } else {
-        camera.position.copy(eye);
-        camera.lookAt(eye.clone().add(dir));
-      }
+    if (photo) {
+      camera.position.copy(photoPos);
+      camera.lookAt(cameraGoal.copy(photoPos).add(dir));
+      people.avatar.visible = true;
       return;
     }
+    people.avatar.visible = third;
+    if (mode === 'wheel') {
+      rides.wheelSeat(seat, cabinEye);
+      camera.position.copy(cabinEye).add(third ? rides.panoramaOffset : rides.windowOffset);
+      if (!wheelFreeLook) {
+        toPalace.subVectors(palaceView, camera.position).normalize();
+        toPlaza.subVectors(plazaView, camera.position).normalize();
+        toPalace.add(toPlaza).normalize();
+        player.yaw = Math.atan2(toPalace.x, -toPalace.z);
+        player.pitch = Math.asin(toPalace.y) + 0.025;
+      }
+      camera.lookAt(cameraGoal.copy(camera.position).add(look()));
+      people.avatar.rotation.y = -player.yaw;
+      return;
+    }
+    if (third && mode === 'slide') {
+      const distance = slideU * rides.slideLength, back = 3.6;
+      camera.position.copy(rides.slidePoint(Math.max(0, distance - back) / rides.slideLength));
+      if (distance < back) {
+        const tangent = rides.slidePoint(0.003).sub(rides.slideEntry).normalize();
+        camera.position.addScaledVector(tangent, distance - back);
+      }
+      camera.position.y += 2.25;
+      cameraGoal.copy(rides.slidePoint(Math.min(1, (distance + 3.4) / rides.slideLength)));
+      cameraGoal.y += 0.86;
+      camera.lookAt(cameraGoal);
+      return;
+    }
+    const eye = player.pos.clone();
+    eye.y += mode === 'slide' ? 0.87 : 1.67;
     if (third) {
       const goal = eye.clone().addScaledVector(dir, -4.4);
       goal.y = eye.y + 1.08 - dir.y * 1.3;
@@ -442,10 +486,10 @@ function play(T) {
   }
   function changeView() {
     third = !third;
+    refreshRideView();
     syncCamera(true);
     save();
-    toast(third ? '第三人称视角' : '第一人称视角');
-    $('viewBtn').setAttribute('aria-pressed', String(third));
+    toast(mode === 'wheel' ? (third ? '舱外全景' : '窗边广角') : (third ? '第三人称视角' : '第一人称视角'));
   }
   function jump() {
     if (photo) {
@@ -578,13 +622,14 @@ function play(T) {
           mode = 'wheel';
           rideClock = 0;
           audio.fx('ride');
-          player.pos.copy(rides.wheelSeat(seat));
-          player.pos.y -= 1.67;
-          face(0, 10, 0.1);
-          toast('已登乘 · 拖动可环顾园区');
+          wheelFreeLook = false;
+          followCabin();
+          refreshRideView();
+          syncCamera(true);
+          toast('拖动环顾园区，点右下角观景按钮或按 V 换位');
         });
-      else if (Math.hypot(player.pos.x - (skatingRink.x - skatingRink.rx), player.pos.z - skatingRink.z) < 3.5)
-        set(player.skatesOn ? '脱下冰鞋' : '穿上冰鞋', toggleSkates);
+      else if (atSkateDesk())
+        set(!player.ownsSkates ? '领取冰鞋' : player.skatesOn ? '脱下冰鞋' : '穿上冰鞋', toggleSkates);
       else if (dist(-39, 70) < 10.5)
         set('开始雪仗', () => {
           mode = 'snow';
@@ -631,7 +676,7 @@ function play(T) {
     if (activity() !== 'walk')
       $('banner').textContent =
         mode === 'wheel'
-          ? '座舱高度 ' + Math.max(0, Math.round(rides.wheelSeat(seat).y)) + ' m'
+          ? '座舱高度 ' + Math.max(0, Math.round(rides.wheelSeat(seat, cabinEye).y)) + ' m'
           : mode === 'slide'
           ? '滑行速度 ' + Math.round(slideSpeed * 3.6) + ' km/h'
           : player.skating
@@ -644,6 +689,13 @@ function play(T) {
     near?.fn();
     detect();
     updateArea();
+  }
+  function followCabin() {
+    rides.wheelSeat(seat, cabinEye);
+    cabinEye.y -= cabinEyeHeight;
+    if (photo) photoPos.add(cameraGoal.subVectors(cabinEye, player.pos));
+    player.pos.copy(cabinEye);
+    player.speed = 0;
   }
   function physical(dt) {
     if (dialog || paused) return;
@@ -659,10 +711,21 @@ function play(T) {
       dx = sin * forward + cos * side,
       dz = -cos * forward + sin * side,
       running = held.ShiftLeft || held.ShiftRight || mobileRun;
+    if (mode === 'wheel') {
+      rideClock += dt;
+      followCabin();
+      if (rideClock >= rides.wheelPeriod) {
+        if (photo) endPhoto();
+        leaveMode();
+        return;
+      }
+      if (!photo) return;
+    }
     if (photo) {
       const speed = running ? 17 : 8,
         dir = look();
-      photoPos.x = clamp(photoPos.x + (dir.x * forward + cos * side) * speed * dt, -86, 86);
+      const extent = mode === 'wheel' ? 128 : 86;
+      photoPos.x = clamp(photoPos.x + (dir.x * forward + cos * side) * speed * dt, -extent, extent);
       photoPos.z = clamp(photoPos.z + (dir.z * forward + sin * side) * speed * dt, -82, 100);
       photoPos.y = clamp(
         photoPos.y +
@@ -672,21 +735,13 @@ function play(T) {
       );
       return;
     }
-    if (mode === 'wheel') {
-      rideClock += dt;
-      player.pos.copy(rides.wheelSeat(seat));
-      player.pos.y -= 1.67;
-      player.speed = 0;
-      if (rideClock >= 106) leaveMode();
-      return;
-    }
     if (mode === 'slide') {
       rideClock += dt;
       const a = rides.slidePoint(slideU),
         b = rides.slidePoint(Math.min(1, slideU + 0.009));
       const slope = Math.max(0, (a.y - b.y) / Math.max(0.02, a.distanceTo(b)));
       slideSpeed = clamp(slideSpeed + (9.81 * slope + 0.62 - 0.016 * slideSpeed) * dt, 4, 21);
-      slideU = Math.min(1, slideU + (slideSpeed * dt) / 78.31);
+      slideU = Math.min(1, slideU + (slideSpeed * dt) / rides.slideLength);
       const p = rides.slidePoint(slideU),
         next = rides.slidePoint(Math.min(1, slideU + 0.035));
       player.pos.copy(p);
@@ -769,7 +824,7 @@ function play(T) {
   function startPhoto() {
     if (dialog) closeDialog();
     if (!photo) {
-      if (mode === 'wheel' || mode === 'slide') leaveMode();
+      if (mode === 'slide') leaveMode();
       syncCamera(true);
       photoBack = { yaw: player.yaw, pitch: player.pitch };
       photoPos.copy(camera.position);
@@ -840,7 +895,7 @@ function play(T) {
       ['Space', '跳跃'],
       ['E', '互动、收集或下车'],
       ['M', '地图与快速到达'],
-      ['R / 冰鞋按钮', '全园穿脱冰鞋，冰面滑行，雪地步行'],
+      ['R / 冰鞋按钮', '先到冰场西门领鞋，领过后可随处穿脱'],
       ['V', '切换第一／第三人称'],
       ['P', '进入或退出拍照'],
       ['F / 点击', '雪仗时投掷'],
@@ -1053,6 +1108,7 @@ function play(T) {
   $('viewBtn').onclick = changeView;
   $('skatesBtn').onclick = toggleSkates;
   syncSkatesButton();
+  refreshRideView();
   $('photoBtn').onclick = startPhoto;
   $('exitPhoto').onclick = endPhoto;
   $('shutter').onclick = photograph;
@@ -1119,6 +1175,7 @@ function play(T) {
   });
   function turn(dx, dy) {
     if (mode === 'slide' && !photo) return;
+    if (mode === 'wheel' && !photo && (dx || dy)) wheelFreeLook = true;
     player.yaw += dx * 0.00315;
     player.pitch = clamp(player.pitch - dy * 0.0026, -1.32, 1.31);
   }
@@ -1273,6 +1330,7 @@ function play(T) {
     sculptures.update(t);
     woods.update(t, camera.position);
     player.sliding = mode === 'slide';
+    player.seated = mode === 'wheel';
     people.update(t, dialog ? 0 : dt, player);
     kit.clock.value = t;
     kit.festival.value +=

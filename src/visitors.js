@@ -132,6 +132,32 @@ function visitors(T, kit) {
     }
     prev = p;
   }
+  const rack = new T.Group(), rackBox = new T.BoxGeometry();
+  rack.position.set(skatingRink.deskX, 0, skatingRink.deskZ);
+  group.add(rack);
+  const rackPart = (x, y, z, w, h, d, color) => fixed(rack, rackBox, color, x, y, z, w, h, d);
+  for (const x of [-0.85, 0.85]) rackPart(x, 0.66, -0.16, 0.09, 1.32, 0.1, 0x536c75);
+  rackPart(0, 0.44, 0, 1.90, 0.10, 0.53, 0x986f53);
+  rackPart(0, 1.21, -0.16, 1.9, 0.42, 0.09, 0xc5ddd8);
+  for (const x of [-0.65, -0.42, -0.06, 0.17, 0.54, 0.76]) {
+    fixed(rack, S, 0x344f65, x, 0.62, 0.01, 0.085, 0.13, 0.13);
+    fixed(rack, S, 0x7599a4, x, 0.57, 0.09, 0.09, 0.08, 0.15);
+    rackPart(x, 0.505, 0.065, 0.023, 0.035, 0.30, 0xe9f6ff);
+  }
+  if (typeof document !== 'undefined') {
+    const canvas = document.createElement('canvas');
+    canvas.width = 384; canvas.height = 96;
+    const ctx = canvas.getContext('2d');
+    ctx.fillStyle = '#193842'; ctx.fillRect(0, 0, 384, 96);
+    ctx.fillStyle = '#d8f6ea'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.font = '600 47px sans-serif'; ctx.fillText('冰鞋领取处', 192, 49);
+    const map = new T.CanvasTexture(canvas);
+    map.colorSpace = T.SRGBColorSpace;
+    const sign = new T.Mesh(new T.PlaneGeometry(1.80, 0.39), new T.MeshBasicMaterial({ map }));
+    sign.position.set(0, 1.21, -0.108);
+    rack.add(sign);
+  }
+  colliders.push({ type: 'box', x: skatingRink.deskX, z: skatingRink.deskZ, w: 1.9, d: 0.54, maxY: 1.43 });
   const targets = [],
     targetModels = [],
     elapsed = [];
@@ -190,7 +216,7 @@ function visitors(T, kit) {
     update(t, dt, p) {
       const speed = p.speed || 0;
       phase += dt * (2.8 + Math.min(7, speed) * 1.3) * Math.min(1, speed * 2);
-      hero.pose(phase, speed, p.grounded, p.skating, p.sliding, p.skatesOn);
+      hero.pose(phase, speed, p.grounded, p.skating, p.sliding || p.seated, p.skatesOn);
       guests.forEach((a, i) => {
         const skating = i > 2,
           k = t * (skating ? 0.28 : 0.08) + i * 1.8,
