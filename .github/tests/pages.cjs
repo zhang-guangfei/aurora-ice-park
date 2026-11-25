@@ -80,8 +80,25 @@ async function verifyPark() {
     await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '摩天轮观景');
     await page.keyboard.press('e');
     await page.waitForFunction(() => document.querySelector('#modeLabel').textContent === '自由探索');
-    assert.deepEqual(errors, []);
     console.log('The park map opened. Fast travel, boarding and exiting the Ferris wheel passed.');
+
+    await page.locator('#mapBtn').click();
+    await page.locator('[data-place]').filter({ hasText: '中心广场' }).click();
+    await page.locator('#travelBtn').click();
+    await page.locator('#settingsBtn').click();
+    await page.locator('[data-option="quality"][data-value="medium"]').click();
+    await page.locator('#closeDlg').click();
+    const sign = page.locator('#way small');
+    await page.waitForFunction(() => !document.querySelector('#way').hidden && /\d/.test(document.querySelector('#way small').textContent));
+    const startDistance = parseInt(await sign.textContent(), 10);
+    await page.keyboard.down('w');
+    try {
+      await page.waitForFunction(start => parseInt(document.querySelector('#way small').textContent, 10) <= start - 2, startDistance);
+    } finally {
+      await page.keyboard.up('w');
+    }
+    assert.deepEqual(errors, []);
+    console.log('Walked along the ice avenue in medium quality with planar reflections enabled.');
   } finally {
     await browser.close();
   }

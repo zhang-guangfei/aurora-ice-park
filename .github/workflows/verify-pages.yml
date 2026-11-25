@@ -6,6 +6,9 @@ on:
     paths:
       - '.github/workflows/verify-pages.yml'
       - '.github/tests/pages.cjs'
+      - '.github/tests/ice-reflection.cjs'
+      - 'src/terrain.js'
+      - 'src/game.js'
   workflow_run:
     workflows: ['pages build and deployment']
     branches: [gh-pages]
@@ -27,6 +30,10 @@ jobs:
           persist-credentials: false
       - name: Install browser test tools
         run: npm install --prefix "$RUNNER_TEMP/park-check" --no-audit --no-fund --ignore-scripts --no-package-lock playwright-core@1.58.2 pngjs@7.0.0
+      - name: Compare moving ice reflections with full redraws
+        env:
+          SOURCE_REF: ${{ github.event.workflow_run.head_sha || github.sha }}
+        run: NODE_PATH="$RUNNER_TEMP/park-check/node_modules" node .github/tests/ice-reflection.cjs
       - name: Check the published game in Chrome
         env:
           RELEASE_REF: ${{ github.event.workflow_run.head_sha || 'origin/gh-pages' }}

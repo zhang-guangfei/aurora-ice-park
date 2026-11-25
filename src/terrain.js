@@ -76,9 +76,20 @@ function ground(T, renderer, scene, camera, kit) {
     minFilter: T.LinearFilter,
     magFilter: T.LinearFilter,
   });
+  const sampleDepth = renderer.capabilities.isWebGL2 || renderer.extensions.has('WEBGL_depth_texture');
+  if (sampleDepth) rt.depthTexture = new T.DepthTexture(rt.width, rt.height, T.UnsignedIntType);
+
+  const iceLevel = 0.07;
   const mirror = new T.PerspectiveCamera(),
     matrix = new T.Matrix4(),
+    capturedProjection = new T.Matrix4(),
+    capturedRotation = new T.Quaternion(),
+    reflectedEye = new T.Vector3(),
+    eyeInCapture = new T.Vector4(),
+    inverseDepth = new T.Vector2(),
     enable = { value: 1 };
+  const maxTurn = Math.cos(T.MathUtils.degToRad(5) / 2);
+  let lastCapture = -Infinity, captureInterval = 0.082;
   function makeRoad(materialColor, gloss, pattern = true) {
     const m = new T.MeshPhysicalMaterial({
       color: materialColor,
@@ -91,7 +102,13 @@ function ground(T, renderer, scene, camera, kit) {
       normalMap: kit.normal,
       normalScale: new T.Vector2(0.12, 0.12),
     });
+    if (sampleDepth) m.defines.ICE_DEPTH_REPROJECTION = 1;
     m.onBeforeCompile = (s) => {
+      if (sampleDepth) {
+        s.uniforms.rDepth = { value: rt.depthTexture };
+        s.uniforms.rEyeInCapture = { value: eyeInCapture };
+        s.uniforms.rInverseDepth = { value: inverseDepth };
+      }
       s.uniforms.rTex = { value: rt.texture };
       s.uniforms.rMat = { value: matrix };
       s.uniforms.rEnabled = enable;
@@ -103,24 +120,53 @@ function ground(T, renderer, scene, camera, kit) {
           '#include <project_vertex>\nworldIce=(modelMatrix*vec4(transformed,1.)).xyz;projIce=rMat*vec4(worldIce,1.);'
         );
       s.fragmentShader =
-        'varying vec4 projIce;varying vec3 worldIce;uniform sampler2D rTex;uniform float rEnabled,rGloss;\n' +
+        `varying vec4 projIce;
+varying vec3 worldIce;
+uniform sampler2D rTex;
+uniform float rEnabled, rGloss;
+#ifdef ICE_DEPTH_REPROJECTION
+uniform sampler2D rDepth;
+uniform vec4 rEyeInCapture;
+uniform vec2 rInverseDepth;
+
+float inverseCaptureDepth(vec2 uv, float atIce) {
+  float depth = texture2D(rDepth, clamp(uv, 0.0, 1.0)).r;
+  return min(atIce, rInverseDepth.y + (1.0 - depth) * rInverseDepth.x);
+}
+#endif
+vec2 reflectionUV() {
+#ifdef ICE_DEPTH_REPROJECTION
+  // Project the current mirror ray into the last capture. Points along it differ by offset / view depth.
+  vec4 ray = projIce - rEyeInCapture;
+  vec2 atInfinity = ray.xy / max(ray.w, 0.0001);
+  vec2 offset = rEyeInCapture.xy - atInfinity * rEyeInCapture.w;
+  float atIce = 1.0 / max(projIce.w, 0.0001);
+  vec2 estimate = atInfinity + offset * min(atIce, 0.04);
+  estimate = atInfinity + offset * inverseCaptureDepth(estimate, atIce);
+  return atInfinity + offset * inverseCaptureDepth(estimate, atIce);
+#else
+  return projIce.xy / max(projIce.w, 0.0001);
+#endif
+}
+` +
         s.fragmentShader.replace(
           '#include <opaque_fragment>',
-          `if (rEnabled>.5) {
- vec2 reflUV=projIce.xy/max(.001,projIce.w);
+          `if (rEnabled>.5 && projIce.w>.001) {
+ vec2 reflUV=reflectionUV();
  float frost=.5+.5*sin(worldIce.x*.65+sin(worldIce.z*.42)*2.7)*cos(worldIce.z*.31+worldIce.x*.34);
  vec2 grains=vec2(sin(worldIce.x*4.7+worldIce.z*.81),cos(worldIce.z*3.6+worldIce.x*.59))*(.00016+.00053*frost);
  float grazing=1.-clamp(normalize(cameraPosition-worldIce).y,0.,1.);
  vec2 uv=clamp(reflUV+grains,vec2(.003),vec2(.997)), spread=vec2(.00072,.00175)*(.6+frost);
  vec3 refl=.44*texture2D(rTex,uv).rgb+.18*(texture2D(rTex,uv+spread).rgb+texture2D(rTex,uv-spread).rgb)
           +.10*(texture2D(rTex,uv+vec2(spread.x,-spread.y)).rgb+texture2D(rTex,uv+vec2(-spread.x,spread.y)).rgb);
- float inside=step(0.,reflUV.x)*step(reflUV.x,1.)*step(0.,reflUV.y)*step(reflUV.y,1.);
+ vec2 border=min(reflUV,1.0-reflUV);
+ float inside=smoothstep(0.0,0.012,min(border.x,border.y));
  outgoingLight=mix(outgoingLight,refl*vec3(.84,.95,1.05)+diffuseColor.rgb*.023,inside*rGloss*(.27+.65*grazing)*(1.-.28*frost));
  }
  #include <opaque_fragment>`
         );
     };
-    m.customProgramCacheKey = () => 'mirror-floe-5';
+    m.customProgramCacheKey = () => 'mirror-floe-6';
     return m;
   }
   const road = makeRoad(0x7c9eaf, 0.77),
@@ -306,39 +352,64 @@ function ground(T, renderer, scene, camera, kit) {
   const look = V(0, 0, 0),
     up = V(0, 0, 0),
     bias = new T.Matrix4().set(0.5, 0, 0, 0.5, 0, 0.5, 0, 0.5, 0, 0, 0.5, 0.5, 0, 0, 0, 1);
+  function capture(hide) {
+    mirror.copy(camera, false);
+    // Leave a border so turning between captures can reveal real reflected pixels.
+    mirror.zoom /= 1.12;
+    mirror.updateProjectionMatrix();
+    mirror.position.copy(reflectedEye);
+    camera.getWorldDirection(look);
+    look.y *= -1;
+    up.set(0, 1, 0).applyQuaternion(camera.quaternion);
+    up.y *= -1;
+    mirror.up.copy(up);
+    mirror.lookAt(look.add(mirror.position));
+    mirror.updateMatrixWorld();
+    matrix.copy(bias).multiply(mirror.projectionMatrix).multiply(mirror.matrixWorldInverse);
+    inverseDepth.set(1 / mirror.near - 1 / mirror.far, 1 / mirror.far);
+    capturedProjection.copy(camera.projectionMatrix);
+    capturedRotation.copy(camera.quaternion);
+
+    const target = renderer.getRenderTarget(), shadow = renderer.shadowMap.autoUpdate;
+    const surfaceVisible = surfaces.visible, visible = hide.map(object => object.visible);
+    try {
+      surfaces.visible = false;
+      for (const object of hide) object.visible = false;
+      renderer.shadowMap.autoUpdate = false;
+      renderer.setRenderTarget(rt);
+      renderer.render(scene, mirror);
+    } finally {
+      renderer.setRenderTarget(target);
+      renderer.shadowMap.autoUpdate = shadow;
+      surfaces.visible = surfaceVisible;
+      hide.forEach((object, i) => { object.visible = visible[i]; });
+    }
+  }
   return {
     road,
     rt,
     resize(w, h, level) {
       enable.value = level === 'low' ? 0 : 1;
+      captureInterval = level === 'high' ? 0.082 : 0.17;
       const f = level === 'high' ? 0.52 : 0.37;
       rt.setSize(Math.max(64, (w * f) | 0), Math.max(48, (h * f) | 0));
+      lastCapture = -Infinity;
     },
-    reflect(hide) {
+    reflect(hide, stamp) {
       if (!enable.value) return;
-      mirror.copy(camera, false);
-      const water = 0.07;
-      mirror.position.y = 2 * water - camera.position.y;
-      camera.getWorldDirection(look);
-      look.y *= -1;
-      look.add(mirror.position);
-      up.set(0, 1, 0).applyQuaternion(camera.quaternion);
-      up.y *= -1;
-      mirror.up.copy(up);
-      mirror.lookAt(look);
-      mirror.updateMatrixWorld();
-      matrix.copy(bias).multiply(mirror.projectionMatrix).multiply(mirror.matrixWorldInverse);
-      surfaces.visible = false;
-      const prev = hide.map((o) => o.visible);
-      hide.forEach((o) => (o.visible = false));
-      const shadow = renderer.shadowMap.autoUpdate;
-      renderer.shadowMap.autoUpdate = false;
-      renderer.setRenderTarget(rt);
-      renderer.render(scene, mirror);
-      renderer.shadowMap.autoUpdate = shadow;
-      surfaces.visible = true;
-      hide.forEach((o, i) => (o.visible = prev[i]));
-      renderer.setRenderTarget(null);
+      reflectedEye.copy(camera.position);
+      reflectedEye.y = 2 * iceLevel - camera.position.y;
+      const shiftSq = reflectedEye.distanceToSquared(mirror.position);
+      const facing = Math.abs(camera.quaternion.dot(capturedRotation));
+      const outsideCapture = sampleDepth
+        ? shiftSq > 0.55 * 0.55 || facing < maxTurn
+        : shiftSq > 1e-10 || facing < 1 - 1e-10;
+      if (outsideCapture || stamp - lastCapture >= captureInterval || !capturedProjection.equals(camera.projectionMatrix)) {
+        capture(hide);
+        lastCapture = stamp;
+      }
+      // This uniform follows both camera translation and head bob on every displayed frame.
+      eyeInCapture.set(reflectedEye.x, reflectedEye.y, reflectedEye.z, 1).applyMatrix4(matrix);
     },
   };
 }

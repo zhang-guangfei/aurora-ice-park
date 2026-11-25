@@ -1270,14 +1270,14 @@ function play(T) {
   updateArea();
   detect();
   syncCamera(true);
+  const reflectionExclusions = [sky.snow, fx.points, fx.feet];
   let prev = now(),
     frame = 0,
     hudTime = -1,
     cost = 0,
     slow = 0,
     adapting = 0,
-    shown = false,
-    mirrorClock = -1;
+    shown = false;
   function loop() {
     requestAnimationFrame(loop);
     const stamp = now(),
@@ -1313,11 +1313,7 @@ function play(T) {
       }
     fx.update(t, dialog ? 0 : dt, specialEnd > t, timeMode === 'night', audio);
     audio.update(mode, player.speed, specialEnd > t);
-    const period = quality === 'high' ? 0.082 : 0.17;
-    if (quality !== 'low' && (stamp - mirrorClock > period || frame === 0)) {
-      terrain.reflect([sky.snow, fx.points, fx.feet]);
-      mirrorClock = stamp;
-    }
+    terrain.reflect(reflectionExclusions, stamp);
     post.render();
     frame++;
     if (!shown) {
