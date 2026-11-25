@@ -1,5 +1,7 @@
 # 梦幻冰雪大世界
 
+[进入冰雪乐园](https://zhang-guangfei.github.io/aurora-ice-park/)
+
 解压整个压缩包，用启用了 WebGL 的桌面浏览器打开 index.html 即可游玩。项目内含 Three.js r160，模型、材质、声音和天空均由程序生成。无需安装依赖或构建。也可在项目目录运行 python -m http.server 8000，通过 http://localhost:8000 启动。
 
 ## 操作
