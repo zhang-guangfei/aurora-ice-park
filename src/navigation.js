@@ -260,12 +260,55 @@ function compassArt(cnv, yaw) {
     }
   }
 }
+const skatingRink = { x: 43, z: 70, rx: 15, rz: 10 };
+function railFraction(rail, x, z) {
+  return Math.max(-0.5, Math.min(0.5, ((x - rail.x) * rail.dx + (z - rail.z) * rail.dz) * rail.invLengthSq));
+}
+// Resolve capsule/rail contact in the horizontal plane. Removing only the inward velocity leaves the tangent free.
+function resolveRinkRail(pos, velocity, fromX, fromZ, radius, rails) {
+  const ring = ((pos.x - skatingRink.x) / skatingRink.rx) ** 2 + ((pos.z - skatingRink.z) / skatingRink.rz) ** 2;
+  if (ring < 0.76 || ring > 1.27) return -Infinity;
+  let support = -Infinity;
+  for (let pass = 0; pass < 3; pass++) {
+    let adjusted = false;
+    for (const rail of rails) {
+      const t = railFraction(rail, pos.x, pos.z), cx = rail.x + t * rail.dx, cz = rail.z + t * rail.dz;
+      let nx = pos.x - cx, nz = pos.z - cz;
+      const distance = Math.hypot(nx, nz), limit = radius + rail.r;
+      if (distance >= limit) continue;
+      if (pos.y >= rail.maxY - 0.015) {
+        support = Math.max(support, rail.maxY);
+        continue;
+      }
+      if (distance > 1e-7) {
+        nx /= distance; nz /= distance;
+      } else {
+        const length = Math.hypot(rail.dx, rail.dz);
+        nx = -rail.dz / length; nz = rail.dx / length;
+        if ((fromX - cx) * nx + (fromZ - cz) * nz < 0) { nx = -nx; nz = -nz; }
+      }
+      pos.x += nx * (limit - distance + 0.0001);
+      pos.z += nz * (limit - distance + 0.0001);
+      const inward = Math.min(0, velocity.x * nx + velocity.z * nz);
+      velocity.x -= inward * nx;
+      velocity.z -= inward * nz;
+      adjusted = true;
+    }
+    if (!adjusted) break;
+  }
+  return support;
+}
 function canOccupy(x, z, foot, bodyRadius, bodyHeight, colliders) {
   if (x < -77 || x > 77 || z < -75 || z > 92) return false;
   for (const c of colliders) {
     if (foot >= (c.maxY ?? 100) - 0.015 || foot + bodyHeight <= (c.minY ?? -1) + 0.015) continue;
     const dx = x - c.x,
       dz = z - c.z;
+    if (c.type === 'rinkRail') {
+      const t = railFraction(c, x, z);
+      if ((dx - t * c.dx) ** 2 + (dz - t * c.dz) ** 2 < (c.r + bodyRadius) ** 2) return false;
+      continue;
+    }
     if (c.type === 'circle') {
       if (dx * dx + dz * dz < (c.r + bodyRadius) ** 2) return false;
       continue;
@@ -365,7 +408,7 @@ function guidebook(r) {
       go: [28.7, 0.09, 70],
       face: [47, 68],
       icon: 'skate',
-      detail: '在西侧入口换上冰鞋，利用惯性沿弯道滑行。',
+      detail: '西门直通园路。冰鞋可随处穿脱，冰面滑行，雪地步行。',
     },
     {
       id: 'snow',
